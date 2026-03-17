@@ -4,7 +4,7 @@ import time
 from typing import Dict, List
 import httpx
 
-app = FastAPI(title="MEXC AI Bot Backend v5")
+app = FastAPI(title="MEXC AI Bot Backend v6")
 
 app.add_middleware(
     CORSMiddleware,
@@ -26,11 +26,13 @@ KRAKEN_PAIRS = {
     "XRP/USDT": "XRPUSDT",
 }
 
+INITIAL_EQUITY = 1000.0
+
 bot_state = {
     "running": False,
     "mode": "paper",
-    "equity_usd": 1000.0,
-    "starting_equity_usd": 1000.0,
+    "equity_usd": INITIAL_EQUITY,
+    "starting_equity_usd": INITIAL_EQUITY,
     "max_open_positions": 3,
     "risk_per_trade_pct": 0.5,
     "symbols": SYMBOLS,
@@ -122,6 +124,7 @@ def get_open_trades() -> List[Dict]:
     for t in trades:
         if t["status"] != "open":
             continue
+
         price = market_state[t["symbol"]]["price"]
         unrealized = 0.0
         if price > 0:
@@ -143,10 +146,12 @@ def get_closed_trades() -> List[Dict]:
 
 def get_stats() -> Dict:
     closed = get_closed_trades()
+    open_positions = get_open_trades()
+
     wins = sum(1 for t in closed if t.get("result") == "win")
     losses = sum(1 for t in closed if t.get("result") == "loss")
     realized = round(sum(float(t.get("pnl_usd", 0.0)) for t in closed), 2)
-    unrealized = round(sum(float(t.get("unrealized_pnl_usd", 0.0)) for t in get_open_trades()), 2)
+    unrealized = round(sum(float(t.get("unrealized_pnl_usd", 0.0)) for t in open_positions), 2)
 
     return {
         "starting_equity_usd": round(bot_state["starting_equity_usd"], 2),
@@ -157,7 +162,7 @@ def get_stats() -> Dict:
         "wins": wins,
         "losses": losses,
         "closed_trades": len(closed),
-        "open_trades": len(get_open_trades()),
+        "open_trades": len(open_positions),
         "win_rate_pct": round((wins / len(closed) * 100.0), 2) if closed else 0.0,
     }
 
@@ -222,6 +227,20 @@ def manage_open_trades() -> List[Dict]:
     return closed
 
 
+def reset_paper_account() -> None:
+    global last_market_fetch_ts
+    bot_state["running"] = False
+    bot_state["equity_usd"] = INITIAL_EQUITY
+    bot_state["starting_equity_usd"] = INITIAL_EQUITY
+    bot_state["tick_count"] = 0
+    bot_state["last_error"] = ""
+    signals.clear()
+    trades.clear()
+    last_market_fetch_ts = 0.0
+    for s in SYMBOLS:
+        market_state[s] = {"price": 0.0, "change_24h": 0.0, "volume": 0.0, "score": 0.0}
+
+
 @app.get("/")
 def root():
     return {"message": "Backend online"}
@@ -279,6 +298,20 @@ def api_closed_trades():
 @app.get("/api/v1/stats")
 def api_stats():
     return get_stats()
+
+
+@app.post("/api/v1/market/refresh")
+async def api_market_refresh():
+    ok = await fetch_real_market_data(force=True)
+    if not ok:
+        return {"ok": False, "message": bot_state["last_error"]}
+    return {"ok": True, "market": market_state}
+
+
+@app.post("/api/v1/bot/reset")
+def api_bot_reset():
+    reset_paper_account()
+    return {"ok": True, "message": "Paper account reset done"}
 
 
 @app.post("/api/v1/bot/start")

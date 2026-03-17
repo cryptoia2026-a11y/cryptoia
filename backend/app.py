@@ -4,7 +4,7 @@ import time
 from typing import Dict, List
 import httpx
 
-app = FastAPI(title="MEXC AI Bot Backend v4.3")
+app = FastAPI(title="MEXC AI Bot Backend v4.4")
 
 app.add_middleware(
     CORSMiddleware,
@@ -19,8 +19,8 @@ app.add_middleware(
 
 SYMBOLS = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT"]
 
-BINANCE_SYMBOLS = {
-    "BTC/USDT": "BTCUSDT",
+KRAKEN_PAIRS = {
+    "BTC/USDT": "XBTUSDT",
     "ETH/USDT": "ETHUSDT",
     "SOL/USDT": "SOLUSDT",
     "XRP/USDT": "XRPUSDT",
@@ -57,31 +57,46 @@ async def fetch_real_market_data(force: bool = False) -> bool:
         return True
 
     try:
+        pair_list = ",".join(KRAKEN_PAIRS.values())
+        url = "https://api.kraken.com/0/public/Ticker"
+
         async with httpx.AsyncClient(timeout=20.0) as client:
-            for symbol, binance_symbol in BINANCE_SYMBOLS.items():
-                url = "https://api.binance.com/api/v3/ticker/24hr"
-                response = await client.get(
-                    url,
-                    params={"symbol": binance_symbol},
-                    headers={"accept": "application/json", "user-agent": "cryptoia-bot/1.0"},
-                )
-                response.raise_for_status()
-                item = response.json()
+            response = await client.get(
+                url,
+                params={"pair": pair_list},
+                headers={"accept": "application/json", "user-agent": "cryptoia-bot/1.0"},
+            )
+            response.raise_for_status()
+            payload = response.json()
 
-                price = float(item.get("lastPrice") or 0.0)
-                change_24h = float(item.get("priceChangePercent") or 0.0)
-                volume_base = float(item.get("quoteVolume") or 0.0)
+        if payload.get("error"):
+            raise Exception(f"Kraken error: {payload['error']}")
 
-                volume_score = min(volume_base / 5_000_000_000, 1.0)
-                momentum_score = max(min((change_24h + 10) / 20, 1.0), 0.0)
-                quality_score = round((momentum_score * 0.7) + (volume_score * 0.3), 3)
+        result = payload.get("result", {})
 
-                market_state[symbol] = {
-                    "price": round(price, 6),
-                    "change_24h": round(change_24h, 3),
-                    "volume": round(volume_base, 2),
-                    "score": quality_score,
-                }
+        for symbol, kraken_pair in KRAKEN_PAIRS.items():
+            item = result.get(kraken_pair)
+            if not item:
+                continue
+
+            price = float(item["c"][0]) if item.get("c") else 0.0
+            volume = float(item["v"][1]) if item.get("v") else 0.0
+            open_price = float(item["o"]) if item.get("o") else 0.0
+
+            change_24h = 0.0
+            if open_price > 0:
+                change_24h = ((price - open_price) / open_price) * 100.0
+
+            volume_score = min(volume / 100000.0, 1.0)
+            momentum_score = max(min((change_24h + 10) / 20, 1.0), 0.0)
+            quality_score = round((momentum_score * 0.7) + (volume_score * 0.3), 3)
+
+            market_state[symbol] = {
+                "price": round(price, 6),
+                "change_24h": round(change_24h, 3),
+                "volume": round(volume, 2),
+                "score": quality_score,
+            }
 
         last_market_fetch_ts = now
         bot_state["last_error"] = ""

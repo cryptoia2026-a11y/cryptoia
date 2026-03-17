@@ -234,7 +234,7 @@ def tick_bot():
         signals.insert(0, signal)
         new_signals.append(signal)
 
-        if candidate["score"] >= 0.62:
+        if candidate["score"] >= 0.58:
             opened_trade = create_trade(candidate)
             trades.insert(0, opened_trade)
             break

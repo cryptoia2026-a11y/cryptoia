@@ -1,10 +1,10 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-import random
 import time
 from typing import Dict, List
+import httpx
 
-app = FastAPI(title="MEXC AI Bot Backend v3")
+app = FastAPI(title="MEXC AI Bot Backend v4")
 
 app.add_middleware(
     CORSMiddleware,
@@ -15,6 +15,13 @@ app.add_middleware(
 )
 
 SYMBOLS = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT"]
+
+COINGECKO_IDS = {
+    "BTC/USDT": "bitcoin",
+    "ETH/USDT": "ethereum",
+    "SOL/USDT": "solana",
+    "XRP/USDT": "ripple",
+}
 
 bot_state = {
     "running": False,
@@ -27,54 +34,54 @@ bot_state = {
 }
 
 market_state: Dict[str, Dict] = {
-    "BTC/USDT": {"price": 65000.0, "trend": 0.35, "volatility": 0.9, "volume": 1.2},
-    "ETH/USDT": {"price": 3200.0, "trend": 0.20, "volatility": 1.1, "volume": 1.0},
-    "SOL/USDT": {"price": 145.0, "trend": 0.45, "volatility": 1.4, "volume": 1.3},
-    "XRP/USDT": {"price": 0.62, "trend": -0.10, "volatility": 1.2, "volume": 0.9},
+    s: {"price": 0.0, "change_24h": 0.0, "volume": 0.0, "score": 0.0}
+    for s in SYMBOLS
 }
 
 signals: List[Dict] = []
 trades: List[Dict] = []
 
 
-def clamp(value: float, low: float, high: float) -> float:
-    return max(low, min(high, value))
+async def fetch_real_market_data() -> None:
+    ids = ",".join(COINGECKO_IDS.values())
+    url = "https://api.coingecko.com/api/v3/coins/markets"
 
-
-def update_market() -> None:
-    for symbol, data in market_state.items():
-        drift = data["trend"] * random.uniform(0.1, 0.6)
-        shock = random.uniform(-1.0, 1.0) * data["volatility"]
-        pct_move = (drift + shock) / 100.0
-        data["price"] = round(max(0.0001, data["price"] * (1 + pct_move)), 6)
-
-        data["trend"] = clamp(data["trend"] + random.uniform(-0.12, 0.12), -1.0, 1.0)
-        data["volatility"] = clamp(data["volatility"] + random.uniform(-0.08, 0.08), 0.4, 2.0)
-        data["volume"] = clamp(data["volume"] + random.uniform(-0.15, 0.15), 0.5, 2.0)
-
-
-def score_symbol(symbol: str) -> Dict:
-    data = market_state[symbol]
-    trend_score = (data["trend"] + 1) / 2
-    volume_score = clamp(data["volume"] / 2, 0.0, 1.0)
-    volatility_penalty = abs(data["volatility"] - 1.0)
-    quality_score = clamp((trend_score * 0.55) + (volume_score * 0.35) - (volatility_penalty * 0.12), 0.0, 1.0)
-
-    side = "flat"
-    if quality_score >= 0.68:
-        side = "long" if data["trend"] >= 0 else "short"
-    elif quality_score >= 0.56 and abs(data["trend"]) > 0.25:
-        side = "long" if data["trend"] >= 0 else "short"
-
-    return {
-        "symbol": symbol,
-        "price": data["price"],
-        "trend": round(data["trend"], 3),
-        "volatility": round(data["volatility"], 3),
-        "volume": round(data["volume"], 3),
-        "score": round(quality_score, 3),
-        "side": side,
+    params = {
+        "vs_currency": "usd",
+        "ids": ids,
+        "order": "market_cap_desc",
+        "per_page": 10,
+        "page": 1,
+        "sparkline": "false",
+        "price_change_percentage": "24h",
     }
+
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        response = await client.get(url, params=params)
+        response.raise_for_status()
+        data = response.json()
+
+    by_id = {item["id"]: item for item in data}
+
+    for symbol, coin_id in COINGECKO_IDS.items():
+        item = by_id.get(coin_id)
+        if not item:
+            continue
+
+        price = float(item.get("current_price") or 0.0)
+        change_24h = float(item.get("price_change_percentage_24h") or 0.0)
+        volume = float(item.get("total_volume") or 0.0)
+
+        volume_score = min(volume / 50_000_000_000, 1.0)
+        momentum_score = max(min((change_24h + 10) / 20, 1.0), 0.0)
+        quality_score = round((momentum_score * 0.7) + (volume_score * 0.3), 3)
+
+        market_state[symbol] = {
+            "price": round(price, 6),
+            "change_24h": round(change_24h, 3),
+            "volume": round(volume, 2),
+            "score": quality_score,
+        }
 
 
 def get_open_positions_count() -> int:
@@ -88,18 +95,19 @@ def has_open_trade_for_symbol(symbol: str) -> bool:
 def create_trade(candidate: Dict) -> Dict:
     risk_usd = bot_state["equity_usd"] * (bot_state["risk_per_trade_pct"] / 100.0)
     entry = candidate["price"]
+    side = candidate["side"]
 
-    if candidate["side"] == "long":
+    if side == "long":
         stop = round(entry * 0.992, 6)
         take_profit = round(entry * 1.016, 6)
     else:
         stop = round(entry * 1.008, 6)
         take_profit = round(entry * 0.984, 6)
 
-    trade = {
-        "id": f"trade_{int(time.time() * 1000)}_{random.randint(100,999)}",
+    return {
+        "id": f"trade_{int(time.time() * 1000)}",
         "symbol": candidate["symbol"],
-        "side": candidate["side"],
+        "side": side,
         "entry": entry,
         "stop_loss": stop,
         "take_profit": take_profit,
@@ -108,7 +116,6 @@ def create_trade(candidate: Dict) -> Dict:
         "status": "open",
         "opened_at": int(time.time()),
     }
-    return trade
 
 
 def manage_open_trades() -> List[Dict]:
@@ -119,6 +126,9 @@ def manage_open_trades() -> List[Dict]:
             continue
 
         price = market_state[trade["symbol"]]["price"]
+        if not price:
+            continue
+
         side = trade["side"]
 
         if side == "long":
@@ -198,15 +208,34 @@ def stop_bot():
 
 
 @app.post("/api/v1/bot/tick")
-def tick_bot():
+async def tick_bot():
     if not bot_state["running"]:
         return {"ok": False, "message": "Bot not running"}
 
     bot_state["tick_count"] += 1
-    update_market()
+
+    await fetch_real_market_data()
     closed_trades = manage_open_trades()
 
-    ranked = [score_symbol(sym) for sym in SYMBOLS]
+    ranked = []
+    for symbol in SYMBOLS:
+        data = market_state[symbol]
+        if data["price"] <= 0:
+            continue
+
+        side = "flat"
+        if data["score"] >= 0.58:
+            side = "long" if data["change_24h"] >= 0 else "short"
+
+        ranked.append({
+            "symbol": symbol,
+            "price": data["price"],
+            "change_24h": data["change_24h"],
+            "volume": data["volume"],
+            "score": data["score"],
+            "side": side,
+        })
+
     ranked.sort(key=lambda x: x["score"], reverse=True)
 
     new_signals = []
@@ -225,10 +254,9 @@ def tick_bot():
             "side": candidate["side"],
             "score": candidate["score"],
             "price": candidate["price"],
-            "trend": candidate["trend"],
-            "volatility": candidate["volatility"],
+            "change_24h": candidate["change_24h"],
             "volume": candidate["volume"],
-            "reason": "trend/volume/volatility ranking",
+            "reason": "real price momentum + volume ranking",
             "created_at": int(time.time()),
         }
         signals.insert(0, signal)

@@ -4,7 +4,7 @@ import time
 from typing import Dict, List
 import httpx
 
-app = FastAPI(title="MEXC AI Bot Backend v4.4")
+app = FastAPI(title="MEXC AI Bot Backend v5")
 
 app.add_middleware(
     CORSMiddleware,
@@ -30,6 +30,7 @@ bot_state = {
     "running": False,
     "mode": "paper",
     "equity_usd": 1000.0,
+    "starting_equity_usd": 1000.0,
     "max_open_positions": 3,
     "risk_per_trade_pct": 0.5,
     "symbols": SYMBOLS,
@@ -116,6 +117,51 @@ def has_open_trade_for_symbol(symbol: str) -> bool:
     return any(t for t in trades if t["symbol"] == symbol and t["status"] == "open")
 
 
+def get_open_trades() -> List[Dict]:
+    out = []
+    for t in trades:
+        if t["status"] != "open":
+            continue
+        price = market_state[t["symbol"]]["price"]
+        unrealized = 0.0
+        if price > 0:
+            if t["side"] == "long":
+                unrealized = (price - t["entry"]) / t["entry"] * t["risk_usd"] * 8
+            else:
+                unrealized = (t["entry"] - price) / t["entry"] * t["risk_usd"] * 8
+
+        x = dict(t)
+        x["current_price"] = round(price, 6)
+        x["unrealized_pnl_usd"] = round(unrealized, 2)
+        out.append(x)
+    return out
+
+
+def get_closed_trades() -> List[Dict]:
+    return [t for t in trades if t["status"] == "closed"]
+
+
+def get_stats() -> Dict:
+    closed = get_closed_trades()
+    wins = sum(1 for t in closed if t.get("result") == "win")
+    losses = sum(1 for t in closed if t.get("result") == "loss")
+    realized = round(sum(float(t.get("pnl_usd", 0.0)) for t in closed), 2)
+    unrealized = round(sum(float(t.get("unrealized_pnl_usd", 0.0)) for t in get_open_trades()), 2)
+
+    return {
+        "starting_equity_usd": round(bot_state["starting_equity_usd"], 2),
+        "equity_usd": round(bot_state["equity_usd"], 2),
+        "realized_pnl_usd": realized,
+        "unrealized_pnl_usd": unrealized,
+        "total_pnl_usd": round(realized + unrealized, 2),
+        "wins": wins,
+        "losses": losses,
+        "closed_trades": len(closed),
+        "open_trades": len(get_open_trades()),
+        "win_rate_pct": round((wins / len(closed) * 100.0), 2) if closed else 0.0,
+    }
+
+
 def create_trade(candidate: Dict) -> Dict:
     risk_usd = bot_state["equity_usd"] * (bot_state["risk_per_trade_pct"] / 100.0)
     entry = candidate["price"]
@@ -171,7 +217,7 @@ def manage_open_trades() -> List[Dict]:
             trade["pnl_usd"] = round(pnl, 2)
             trade["result"] = "win" if hit_tp else "loss"
             bot_state["equity_usd"] = round(bot_state["equity_usd"] + trade["pnl_usd"], 2)
-            closed.append(trade)
+            closed.append(dict(trade))
 
     return closed
 
@@ -217,7 +263,22 @@ def get_signals():
 
 @app.get("/api/v1/trades")
 def get_trades():
-    return {"items": trades[:20]}
+    return {"items": trades[:50]}
+
+
+@app.get("/api/v1/open-trades")
+def api_open_trades():
+    return {"items": get_open_trades()[:20]}
+
+
+@app.get("/api/v1/closed-trades")
+def api_closed_trades():
+    return {"items": get_closed_trades()[:20]}
+
+
+@app.get("/api/v1/stats")
+def api_stats():
+    return get_stats()
 
 
 @app.post("/api/v1/bot/start")
@@ -310,6 +371,7 @@ async def tick_bot():
             "opened_trade": opened_trade,
             "closed_trades": closed_trades,
             "equity_usd": bot_state["equity_usd"],
+            "stats": get_stats(),
         }
 
     except Exception as e:

@@ -4,14 +4,13 @@ import time
 from typing import Dict, List
 import httpx
 
-app = FastAPI(title="MEXC AI Bot Backend v4.1")
+app = FastAPI(title="MEXC AI Bot Backend v4.2")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "https://cryptoia-frontend.onrender.com",
         "http://localhost:3000",
-        "*",
     ],
     allow_credentials=False,
     allow_methods=["*"],
@@ -46,8 +45,17 @@ market_state: Dict[str, Dict] = {
 signals: List[Dict] = []
 trades: List[Dict] = []
 
+last_market_fetch_ts = 0.0
+MARKET_CACHE_SECONDS = 60
 
-async def fetch_real_market_data() -> bool:
+
+async def fetch_real_market_data(force: bool = False) -> bool:
+    global last_market_fetch_ts
+
+    now = time.time()
+    if not force and last_market_fetch_ts and (now - last_market_fetch_ts) < MARKET_CACHE_SECONDS:
+        return True
+
     ids = ",".join(COINGECKO_IDS.values())
     url = "https://api.coingecko.com/api/v3/coins/markets"
 
@@ -96,6 +104,8 @@ async def fetch_real_market_data() -> bool:
                 "score": quality_score,
             }
 
+        last_market_fetch_ts = now
+        bot_state["last_error"] = ""
         return True
 
     except Exception as e:
@@ -239,7 +249,10 @@ async def tick_bot():
 
         ok = await fetch_real_market_data()
         if not ok:
-            return {"ok": False, "message": bot_state["last_error"] or "Market data fetch failed"}
+            return {
+                "ok": False,
+                "message": bot_state["last_error"] or "Market data fetch failed",
+            }
 
         closed_trades = manage_open_trades()
 
@@ -253,14 +266,16 @@ async def tick_bot():
             if data["score"] >= 0.58:
                 side = "long" if data["change_24h"] >= 0 else "short"
 
-            ranked.append({
-                "symbol": symbol,
-                "price": data["price"],
-                "change_24h": data["change_24h"],
-                "volume": data["volume"],
-                "score": data["score"],
-                "side": side,
-            })
+            ranked.append(
+                {
+                    "symbol": symbol,
+                    "price": data["price"],
+                    "change_24h": data["change_24h"],
+                    "volume": data["volume"],
+                    "score": data["score"],
+                    "side": side,
+                }
+            )
 
         ranked.sort(key=lambda x: x["score"], reverse=True)
 

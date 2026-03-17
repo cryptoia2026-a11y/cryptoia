@@ -4,12 +4,16 @@ import time
 from typing import Dict, List
 import httpx
 
-app = FastAPI(title="MEXC AI Bot Backend v4")
+app = FastAPI(title="MEXC AI Bot Backend v4.1")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=[
+        "https://cryptoia-frontend.onrender.com",
+        "http://localhost:3000",
+        "*",
+    ],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -31,6 +35,7 @@ bot_state = {
     "risk_per_trade_pct": 0.5,
     "symbols": SYMBOLS,
     "tick_count": 0,
+    "last_error": "",
 }
 
 market_state: Dict[str, Dict] = {
@@ -42,7 +47,7 @@ signals: List[Dict] = []
 trades: List[Dict] = []
 
 
-async def fetch_real_market_data() -> None:
+async def fetch_real_market_data() -> bool:
     ids = ",".join(COINGECKO_IDS.values())
     url = "https://api.coingecko.com/api/v3/coins/markets"
 
@@ -56,32 +61,47 @@ async def fetch_real_market_data() -> None:
         "price_change_percentage": "24h",
     }
 
-    async with httpx.AsyncClient(timeout=20.0) as client:
-        response = await client.get(url, params=params)
-        response.raise_for_status()
-        data = response.json()
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            response = await client.get(
+                url,
+                params=params,
+                headers={
+                    "accept": "application/json",
+                    "user-agent": "cryptoia-bot/1.0",
+                },
+            )
+            response.raise_for_status()
+            data = response.json()
 
-    by_id = {item["id"]: item for item in data}
+        by_id = {item["id"]: item for item in data}
 
-    for symbol, coin_id in COINGECKO_IDS.items():
-        item = by_id.get(coin_id)
-        if not item:
-            continue
+        for symbol, coin_id in COINGECKO_IDS.items():
+            item = by_id.get(coin_id)
+            if not item:
+                continue
 
-        price = float(item.get("current_price") or 0.0)
-        change_24h = float(item.get("price_change_percentage_24h") or 0.0)
-        volume = float(item.get("total_volume") or 0.0)
+            price = float(item.get("current_price") or 0.0)
+            change_24h = float(item.get("price_change_percentage_24h") or 0.0)
+            volume = float(item.get("total_volume") or 0.0)
 
-        volume_score = min(volume / 50_000_000_000, 1.0)
-        momentum_score = max(min((change_24h + 10) / 20, 1.0), 0.0)
-        quality_score = round((momentum_score * 0.7) + (volume_score * 0.3), 3)
+            volume_score = min(volume / 50_000_000_000, 1.0)
+            momentum_score = max(min((change_24h + 10) / 20, 1.0), 0.0)
+            quality_score = round((momentum_score * 0.7) + (volume_score * 0.3), 3)
 
-        market_state[symbol] = {
-            "price": round(price, 6),
-            "change_24h": round(change_24h, 3),
-            "volume": round(volume, 2),
-            "score": quality_score,
-        }
+            market_state[symbol] = {
+                "price": round(price, 6),
+                "change_24h": round(change_24h, 3),
+                "volume": round(volume, 2),
+                "score": quality_score,
+            }
+
+        return True
+
+    except Exception as e:
+        bot_state["last_error"] = f"fetch_real_market_data error: {str(e)}"
+        print(bot_state["last_error"])
+        return False
 
 
 def get_open_positions_count() -> int:
@@ -181,6 +201,7 @@ def get_state():
         "equity_usd": bot_state["equity_usd"],
         "tick_count": bot_state["tick_count"],
         "open_positions": get_open_positions_count(),
+        "last_error": bot_state["last_error"],
         "market": market_state,
     }
 
@@ -198,6 +219,7 @@ def get_trades():
 @app.post("/api/v1/bot/start")
 def start_bot():
     bot_state["running"] = True
+    bot_state["last_error"] = ""
     return {"ok": True, "running": True}
 
 
@@ -209,70 +231,79 @@ def stop_bot():
 
 @app.post("/api/v1/bot/tick")
 async def tick_bot():
-    if not bot_state["running"]:
-        return {"ok": False, "message": "Bot not running"}
+    try:
+        if not bot_state["running"]:
+            return {"ok": False, "message": "Bot not running"}
 
-    bot_state["tick_count"] += 1
+        bot_state["tick_count"] += 1
 
-    await fetch_real_market_data()
-    closed_trades = manage_open_trades()
+        ok = await fetch_real_market_data()
+        if not ok:
+            return {"ok": False, "message": bot_state["last_error"] or "Market data fetch failed"}
 
-    ranked = []
-    for symbol in SYMBOLS:
-        data = market_state[symbol]
-        if data["price"] <= 0:
-            continue
+        closed_trades = manage_open_trades()
 
-        side = "flat"
-        if data["score"] >= 0.58:
-            side = "long" if data["change_24h"] >= 0 else "short"
+        ranked = []
+        for symbol in SYMBOLS:
+            data = market_state[symbol]
+            if data["price"] <= 0:
+                continue
 
-        ranked.append({
-            "symbol": symbol,
-            "price": data["price"],
-            "change_24h": data["change_24h"],
-            "volume": data["volume"],
-            "score": data["score"],
-            "side": side,
-        })
+            side = "flat"
+            if data["score"] >= 0.58:
+                side = "long" if data["change_24h"] >= 0 else "short"
 
-    ranked.sort(key=lambda x: x["score"], reverse=True)
+            ranked.append({
+                "symbol": symbol,
+                "price": data["price"],
+                "change_24h": data["change_24h"],
+                "volume": data["volume"],
+                "score": data["score"],
+                "side": side,
+            })
 
-    new_signals = []
-    opened_trade = None
+        ranked.sort(key=lambda x: x["score"], reverse=True)
 
-    for candidate in ranked:
-        if candidate["side"] == "flat":
-            continue
-        if get_open_positions_count() >= bot_state["max_open_positions"]:
-            break
-        if has_open_trade_for_symbol(candidate["symbol"]):
-            continue
+        new_signals = []
+        opened_trade = None
 
-        signal = {
-            "symbol": candidate["symbol"],
-            "side": candidate["side"],
-            "score": candidate["score"],
-            "price": candidate["price"],
-            "change_24h": candidate["change_24h"],
-            "volume": candidate["volume"],
-            "reason": "real price momentum + volume ranking",
-            "created_at": int(time.time()),
+        for candidate in ranked:
+            if candidate["side"] == "flat":
+                continue
+            if get_open_positions_count() >= bot_state["max_open_positions"]:
+                break
+            if has_open_trade_for_symbol(candidate["symbol"]):
+                continue
+
+            signal = {
+                "symbol": candidate["symbol"],
+                "side": candidate["side"],
+                "score": candidate["score"],
+                "price": candidate["price"],
+                "change_24h": candidate["change_24h"],
+                "volume": candidate["volume"],
+                "reason": "real price momentum + volume ranking",
+                "created_at": int(time.time()),
+            }
+            signals.insert(0, signal)
+            new_signals.append(signal)
+
+            if candidate["score"] >= 0.58:
+                opened_trade = create_trade(candidate)
+                trades.insert(0, opened_trade)
+                break
+
+        return {
+            "ok": True,
+            "tick_count": bot_state["tick_count"],
+            "ranked": ranked,
+            "new_signals": new_signals,
+            "opened_trade": opened_trade,
+            "closed_trades": closed_trades,
+            "equity_usd": bot_state["equity_usd"],
         }
-        signals.insert(0, signal)
-        new_signals.append(signal)
 
-        if candidate["score"] >= 0.58:
-            opened_trade = create_trade(candidate)
-            trades.insert(0, opened_trade)
-            break
-
-    return {
-        "ok": True,
-        "tick_count": bot_state["tick_count"],
-        "ranked": ranked,
-        "new_signals": new_signals,
-        "opened_trade": opened_trade,
-        "closed_trades": closed_trades,
-        "equity_usd": bot_state["equity_usd"],
-    }
+    except Exception as e:
+        bot_state["last_error"] = f"tick_bot error: {str(e)}"
+        print(bot_state["last_error"])
+        return {"ok": False, "message": bot_state["last_error"]}

@@ -4,7 +4,7 @@ import time
 from typing import Dict, List
 import httpx
 
-app = FastAPI(title="MEXC AI Bot Backend v4.2")
+app = FastAPI(title="MEXC AI Bot Backend v4.3")
 
 app.add_middleware(
     CORSMiddleware,
@@ -19,11 +19,11 @@ app.add_middleware(
 
 SYMBOLS = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT"]
 
-COINGECKO_IDS = {
-    "BTC/USDT": "bitcoin",
-    "ETH/USDT": "ethereum",
-    "SOL/USDT": "solana",
-    "XRP/USDT": "ripple",
+BINANCE_SYMBOLS = {
+    "BTC/USDT": "BTCUSDT",
+    "ETH/USDT": "ETHUSDT",
+    "SOL/USDT": "SOLUSDT",
+    "XRP/USDT": "XRPUSDT",
 }
 
 bot_state = {
@@ -46,7 +46,7 @@ signals: List[Dict] = []
 trades: List[Dict] = []
 
 last_market_fetch_ts = 0.0
-MARKET_CACHE_SECONDS = 60
+MARKET_CACHE_SECONDS = 30
 
 
 async def fetch_real_market_data(force: bool = False) -> bool:
@@ -56,53 +56,32 @@ async def fetch_real_market_data(force: bool = False) -> bool:
     if not force and last_market_fetch_ts and (now - last_market_fetch_ts) < MARKET_CACHE_SECONDS:
         return True
 
-    ids = ",".join(COINGECKO_IDS.values())
-    url = "https://api.coingecko.com/api/v3/coins/markets"
-
-    params = {
-        "vs_currency": "usd",
-        "ids": ids,
-        "order": "market_cap_desc",
-        "per_page": 10,
-        "page": 1,
-        "sparkline": "false",
-        "price_change_percentage": "24h",
-    }
-
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
-            response = await client.get(
-                url,
-                params=params,
-                headers={
-                    "accept": "application/json",
-                    "user-agent": "cryptoia-bot/1.0",
-                },
-            )
-            response.raise_for_status()
-            data = response.json()
+            for symbol, binance_symbol in BINANCE_SYMBOLS.items():
+                url = "https://api.binance.com/api/v3/ticker/24hr"
+                response = await client.get(
+                    url,
+                    params={"symbol": binance_symbol},
+                    headers={"accept": "application/json", "user-agent": "cryptoia-bot/1.0"},
+                )
+                response.raise_for_status()
+                item = response.json()
 
-        by_id = {item["id"]: item for item in data}
+                price = float(item.get("lastPrice") or 0.0)
+                change_24h = float(item.get("priceChangePercent") or 0.0)
+                volume_base = float(item.get("quoteVolume") or 0.0)
 
-        for symbol, coin_id in COINGECKO_IDS.items():
-            item = by_id.get(coin_id)
-            if not item:
-                continue
+                volume_score = min(volume_base / 5_000_000_000, 1.0)
+                momentum_score = max(min((change_24h + 10) / 20, 1.0), 0.0)
+                quality_score = round((momentum_score * 0.7) + (volume_score * 0.3), 3)
 
-            price = float(item.get("current_price") or 0.0)
-            change_24h = float(item.get("price_change_percentage_24h") or 0.0)
-            volume = float(item.get("total_volume") or 0.0)
-
-            volume_score = min(volume / 50_000_000_000, 1.0)
-            momentum_score = max(min((change_24h + 10) / 20, 1.0), 0.0)
-            quality_score = round((momentum_score * 0.7) + (volume_score * 0.3), 3)
-
-            market_state[symbol] = {
-                "price": round(price, 6),
-                "change_24h": round(change_24h, 3),
-                "volume": round(volume, 2),
-                "score": quality_score,
-            }
+                market_state[symbol] = {
+                    "price": round(price, 6),
+                    "change_24h": round(change_24h, 3),
+                    "volume": round(volume_base, 2),
+                    "score": quality_score,
+                }
 
         last_market_fetch_ts = now
         bot_state["last_error"] = ""

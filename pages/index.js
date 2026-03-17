@@ -13,7 +13,6 @@ export default function Home() {
 
   async function refreshAll() {
     setLoading(true);
-    setError("");
 
     try {
       const [configRes, stateRes, signalsRes, tradesRes] = await Promise.all([
@@ -37,6 +36,12 @@ export default function Home() {
       setSignals(signalsData.items || []);
       setTrades(tradesData.items || []);
       setLastUpdated(new Date());
+
+      if (stateData?.last_error) {
+        setError(stateData.last_error);
+      } else {
+        setError("");
+      }
     } catch (err) {
       console.error("Erreur refreshAll:", err);
       setError("Impossible de récupérer les données du bot.");
@@ -48,33 +53,51 @@ export default function Home() {
   async function startBot() {
     setError("");
     try {
-      await fetch(`${API_BASE}/api/v1/bot/start`, { method: "POST" });
+      const res = await fetch(`${API_BASE}/api/v1/bot/start`, { method: "POST" });
+      const data = await res.json();
+
+      if (!res.ok || data?.ok === false) {
+        throw new Error(data?.message || "Impossible de démarrer le bot.");
+      }
+
       await refreshAll();
     } catch (err) {
       console.error(err);
-      setError("Impossible de démarrer le bot.");
+      setError(err.message || "Impossible de démarrer le bot.");
     }
   }
 
   async function stopBot() {
     setError("");
     try {
-      await fetch(`${API_BASE}/api/v1/bot/stop`, { method: "POST" });
+      const res = await fetch(`${API_BASE}/api/v1/bot/stop`, { method: "POST" });
+      const data = await res.json();
+
+      if (!res.ok || data?.ok === false) {
+        throw new Error(data?.message || "Impossible d'arrêter le bot.");
+      }
+
       await refreshAll();
     } catch (err) {
       console.error(err);
-      setError("Impossible d'arrêter le bot.");
+      setError(err.message || "Impossible d'arrêter le bot.");
     }
   }
 
   async function tickBot() {
     setError("");
     try {
-      await fetch(`${API_BASE}/api/v1/bot/tick`, { method: "POST" });
+      const res = await fetch(`${API_BASE}/api/v1/bot/tick`, { method: "POST" });
+      const data = await res.json();
+
+      if (!res.ok || data?.ok === false) {
+        throw new Error(data?.message || "Impossible de lancer un tick.");
+      }
+
       await refreshAll();
     } catch (err) {
       console.error(err);
-      setError("Impossible de lancer un tick.");
+      setError(err.message || "Impossible de lancer un tick.");
     }
   }
 
@@ -85,7 +108,7 @@ export default function Home() {
   useEffect(() => {
     const interval = setInterval(() => {
       refreshAll();
-    }, 5000);
+    }, 15000);
 
     return () => clearInterval(interval);
   }, []);
@@ -181,6 +204,7 @@ export default function Home() {
             borderRadius: 12,
             background: "#4a1626",
             color: "#ffd2d2",
+            whiteSpace: "pre-wrap",
           }}
         >
           {error}

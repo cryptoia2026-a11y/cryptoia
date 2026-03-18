@@ -4,7 +4,7 @@ import time
 from typing import Dict, List
 import httpx
 
-app = FastAPI(title="MEXC AI Bot Backend v7")
+app = FastAPI(title="MEXC AI Bot Backend v8")
 
 app.add_middleware(
     CORSMiddleware,
@@ -27,6 +27,8 @@ KRAKEN_PAIRS = {
 }
 
 INITIAL_EQUITY = 1000.0
+MARKET_CACHE_SECONDS = 30
+SYMBOL_COOLDOWN_SECONDS = 180
 
 bot_state = {
     "running": False,
@@ -44,15 +46,22 @@ bot_state = {
 }
 
 market_state: Dict[str, Dict] = {
-    s: {"price": 0.0, "change_24h": 0.0, "volume": 0.0, "score": 0.0}
+    s: {
+        "price": 0.0,
+        "change_24h": 0.0,
+        "volume": 0.0,
+        "score": 0.0,
+        "trend_strength": 0.0,
+        "quality": "low",
+    }
     for s in SYMBOLS
 }
 
 signals: List[Dict] = []
 trades: List[Dict] = []
+symbol_cooldowns: Dict[str, int] = {s: 0 for s in SYMBOLS}
 
 last_market_fetch_ts = 0.0
-MARKET_CACHE_SECONDS = 30
 
 
 async def fetch_real_market_data(force: bool = False) -> bool:
@@ -93,15 +102,31 @@ async def fetch_real_market_data(force: bool = False) -> bool:
             if open_price > 0:
                 change_24h = ((price - open_price) / open_price) * 100.0
 
+            abs_change = abs(change_24h)
+            momentum_score = max(min((abs_change + 2) / 8, 1.0), 0.0)
+            direction_score = max(min((change_24h + 8) / 16, 1.0), 0.0)
             volume_score = min(volume / 100000.0, 1.0)
-            momentum_score = max(min((change_24h + 10) / 20, 1.0), 0.0)
-            quality_score = round((momentum_score * 0.7) + (volume_score * 0.3), 3)
+            trend_strength = round(abs(change_24h), 3)
+
+            quality_score = round(
+                (momentum_score * 0.45) + (direction_score * 0.25) + (volume_score * 0.30),
+                3,
+            )
+
+            if quality_score >= 0.72:
+                quality = "high"
+            elif quality_score >= 0.58:
+                quality = "medium"
+            else:
+                quality = "low"
 
             market_state[symbol] = {
                 "price": round(price, 6),
                 "change_24h": round(change_24h, 3),
                 "volume": round(volume, 2),
                 "score": quality_score,
+                "trend_strength": trend_strength,
+                "quality": quality,
             }
 
         last_market_fetch_ts = now
@@ -120,6 +145,14 @@ def get_open_positions_count() -> int:
 
 def has_open_trade_for_symbol(symbol: str) -> bool:
     return any(t for t in trades if t["symbol"] == symbol and t["status"] == "open")
+
+
+def is_symbol_on_cooldown(symbol: str) -> bool:
+    return int(time.time()) < symbol_cooldowns.get(symbol, 0)
+
+
+def set_symbol_cooldown(symbol: str) -> None:
+    symbol_cooldowns[symbol] = int(time.time()) + SYMBOL_COOLDOWN_SECONDS
 
 
 def get_open_trades() -> List[Dict]:
@@ -176,11 +209,11 @@ def create_trade(candidate: Dict) -> Dict:
     side = candidate["side"]
 
     if side == "long":
-        stop = round(entry * 0.992, 6)
-        take_profit = round(entry * 1.016, 6)
+        stop = round(entry * 0.993, 6)
+        take_profit = round(entry * 1.018, 6)
     else:
-        stop = round(entry * 1.008, 6)
-        take_profit = round(entry * 0.984, 6)
+        stop = round(entry * 1.007, 6)
+        take_profit = round(entry * 0.982, 6)
 
     return {
         "id": f"trade_{int(time.time() * 1000)}",
@@ -191,6 +224,7 @@ def create_trade(candidate: Dict) -> Dict:
         "take_profit": take_profit,
         "risk_usd": round(risk_usd, 2),
         "score": candidate["score"],
+        "quality": candidate["quality"],
         "status": "open",
         "opened_at": int(time.time()),
     }
@@ -218,13 +252,24 @@ def manage_open_trades() -> List[Dict]:
             hit_tp = price <= trade["take_profit"]
             pnl = (trade["entry"] - price) / trade["entry"] * trade["risk_usd"] * 8
 
-        if hit_stop or hit_tp:
+        age_seconds = int(time.time()) - int(trade["opened_at"])
+        quality_drop = market_state[trade["symbol"]]["score"] < 0.42
+        timed_exit = age_seconds > 600 and abs(pnl) < 0.25
+
+        if hit_stop or hit_tp or quality_drop or timed_exit:
             trade["status"] = "closed"
             trade["exit"] = round(price, 6)
             trade["closed_at"] = int(time.time())
             trade["pnl_usd"] = round(pnl, 2)
-            trade["result"] = "win" if hit_tp else "loss"
+            trade["result"] = "win" if pnl > 0 else "loss"
+            trade["close_reason"] = (
+                "take_profit" if hit_tp else
+                "stop_loss" if hit_stop else
+                "quality_drop" if quality_drop else
+                "timed_exit"
+            )
             bot_state["equity_usd"] = round(bot_state["equity_usd"] + trade["pnl_usd"], 2)
+            set_symbol_cooldown(trade["symbol"])
             closed.append(dict(trade))
 
     return closed
@@ -243,7 +288,15 @@ def reset_paper_account() -> None:
     trades.clear()
     last_market_fetch_ts = 0.0
     for s in SYMBOLS:
-        market_state[s] = {"price": 0.0, "change_24h": 0.0, "volume": 0.0, "score": 0.0}
+        market_state[s] = {
+            "price": 0.0,
+            "change_24h": 0.0,
+            "volume": 0.0,
+            "score": 0.0,
+            "trend_strength": 0.0,
+            "quality": "low",
+        }
+        symbol_cooldowns[s] = 0
 
 
 async def run_tick_cycle():
@@ -268,7 +321,11 @@ async def run_tick_cycle():
             continue
 
         side = "flat"
-        if data["score"] >= 0.58:
+        if data["score"] >= 0.70 and data["change_24h"] >= 0.35:
+            side = "long"
+        elif data["score"] >= 0.70 and data["change_24h"] <= -0.35:
+            side = "short"
+        elif data["score"] >= 0.60 and data["trend_strength"] >= 0.60:
             side = "long" if data["change_24h"] >= 0 else "short"
 
         ranked.append(
@@ -278,17 +335,22 @@ async def run_tick_cycle():
                 "change_24h": data["change_24h"],
                 "volume": data["volume"],
                 "score": data["score"],
+                "trend_strength": data["trend_strength"],
+                "quality": data["quality"],
                 "side": side,
+                "cooldown": is_symbol_on_cooldown(symbol),
             }
         )
 
-    ranked.sort(key=lambda x: x["score"], reverse=True)
+    ranked.sort(key=lambda x: (x["score"], x["trend_strength"]), reverse=True)
 
     new_signals = []
     opened_trade = None
 
     for candidate in ranked:
         if candidate["side"] == "flat":
+            continue
+        if candidate["cooldown"]:
             continue
         if get_open_positions_count() >= bot_state["max_open_positions"]:
             break
@@ -302,13 +364,15 @@ async def run_tick_cycle():
             "price": candidate["price"],
             "change_24h": candidate["change_24h"],
             "volume": candidate["volume"],
-            "reason": "real price momentum + volume ranking",
+            "trend_strength": candidate["trend_strength"],
+            "quality": candidate["quality"],
+            "reason": "trend + momentum + volume + cooldown filter",
             "created_at": int(time.time()),
         }
         signals.insert(0, signal)
         new_signals.append(signal)
 
-        if candidate["score"] >= 0.58:
+        if candidate["score"] >= 0.60:
             opened_trade = create_trade(candidate)
             trades.insert(0, opened_trade)
             break
@@ -361,6 +425,7 @@ def get_state():
         "open_positions": get_open_positions_count(),
         "last_error": bot_state["last_error"],
         "market": market_state,
+        "cooldowns": symbol_cooldowns,
     }
 
 
@@ -453,23 +518,13 @@ async def tick_bot():
 async def auto_pulse():
     try:
         if not bot_state["running"] or not bot_state["auto_enabled"]:
-            return {
-                "ok": True,
-                "executed": False,
-                "message": "Auto mode inactive",
-                "tick_count": bot_state["tick_count"],
-            }
+            return {"ok": True, "executed": False, "message": "Auto mode inactive"}
 
         now = time.time()
         wait_s = bot_state["auto_interval_seconds"]
 
         if bot_state["last_auto_tick_ts"] and (now - bot_state["last_auto_tick_ts"]) < wait_s:
-            return {
-                "ok": True,
-                "executed": False,
-                "message": "Waiting next interval",
-                "tick_count": bot_state["tick_count"],
-            }
+            return {"ok": True, "executed": False, "message": "Waiting next interval"}
 
         result = await run_tick_cycle()
         if result.get("ok"):

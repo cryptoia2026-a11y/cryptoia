@@ -4,7 +4,7 @@ import time
 from typing import Dict, List
 import httpx
 
-app = FastAPI(title="MEXC AI Bot Backend v8.1 Top20 Fixed")
+app = FastAPI(title="MEXC AI Bot Backend v8.3 Fix")
 
 app.add_middleware(
     CORSMiddleware,
@@ -45,7 +45,10 @@ KRAKEN_PAIRS: Dict[str, str] = {}
 
 INITIAL_EQUITY = 1000.0
 MARKET_CACHE_SECONDS = 30
-SYMBOL_COOLDOWN_SECONDS = 120
+SYMBOL_COOLDOWN_SECONDS = 180
+MIN_VALID_PRICE = 0.00001
+MIN_SCORE_TO_OPEN = 0.58
+MAX_RECENT_SAME_SYMBOL_SIGNALS = 2
 
 bot_state = {
     "running": False,
@@ -200,7 +203,7 @@ async def fetch_real_market_data(force: bool = False) -> bool:
                 quality = "low"
 
             market_state[symbol] = {
-                "price": round(price, 6),
+                "price": round(price, 8 if price < 1 else 6),
                 "change_24h": round(change_24h, 3),
                 "volume": round(volume, 2),
                 "score": quality_score,
@@ -234,6 +237,22 @@ def set_symbol_cooldown(symbol: str) -> None:
     symbol_cooldowns[symbol] = int(time.time()) + SYMBOL_COOLDOWN_SECONDS
 
 
+def recent_signal_count_for_symbol(symbol: str) -> int:
+    return sum(1 for s in signals[:20] if s.get("symbol") == symbol)
+
+
+def calc_trade_pnl(price_now: float, trade: Dict) -> float:
+    if trade["entry"] <= 0 or price_now <= 0:
+        return 0.0
+
+    multiplier = 8.0
+    if trade["side"] == "long":
+        pnl = ((price_now - trade["entry"]) / trade["entry"]) * trade["risk_usd"] * multiplier
+    else:
+        pnl = ((trade["entry"] - price_now) / trade["entry"]) * trade["risk_usd"] * multiplier
+    return pnl
+
+
 def get_open_trades() -> List[Dict]:
     out = []
     for t in trades:
@@ -241,16 +260,11 @@ def get_open_trades() -> List[Dict]:
             continue
 
         price = market_state[t["symbol"]]["price"]
-        unrealized = 0.0
-        if price > 0:
-            if t["side"] == "long":
-                unrealized = (price - t["entry"]) / t["entry"] * t["risk_usd"] * 8
-            else:
-                unrealized = (t["entry"] - price) / t["entry"] * t["risk_usd"] * 8
+        unrealized = calc_trade_pnl(price, t)
 
         x = dict(t)
-        x["current_price"] = round(price, 6)
-        x["unrealized_pnl_usd"] = round(unrealized, 2)
+        x["current_price"] = round(price, 8 if price < 1 else 6)
+        x["unrealized_pnl_usd"] = round(unrealized, 4)
         out.append(x)
     return out
 
@@ -265,15 +279,15 @@ def get_stats() -> Dict:
 
     wins = sum(1 for t in closed if t.get("result") == "win")
     losses = sum(1 for t in closed if t.get("result") == "loss")
-    realized = round(sum(float(t.get("pnl_usd", 0.0)) for t in closed), 2)
-    unrealized = round(sum(float(t.get("unrealized_pnl_usd", 0.0)) for t in open_positions), 2)
+    realized = round(sum(float(t.get("pnl_usd", 0.0)) for t in closed), 4)
+    unrealized = round(sum(float(t.get("unrealized_pnl_usd", 0.0)) for t in open_positions), 4)
 
     return {
         "starting_equity_usd": round(bot_state["starting_equity_usd"], 2),
-        "equity_usd": round(bot_state["equity_usd"], 2),
+        "equity_usd": round(bot_state["equity_usd"], 4),
         "realized_pnl_usd": realized,
         "unrealized_pnl_usd": unrealized,
-        "total_pnl_usd": round(realized + unrealized, 2),
+        "total_pnl_usd": round(realized + unrealized, 4),
         "wins": wins,
         "losses": losses,
         "closed_trades": len(closed),
@@ -288,20 +302,20 @@ def create_trade(candidate: Dict) -> Dict:
     side = candidate["side"]
 
     if side == "long":
-        stop = round(entry * 0.993, 6)
-        take_profit = round(entry * 1.018, 6)
+        stop = entry * 0.993
+        take_profit = entry * 1.018
     else:
-        stop = round(entry * 1.007, 6)
-        take_profit = round(entry * 0.982, 6)
+        stop = entry * 1.007
+        take_profit = entry * 0.982
 
     return {
         "id": f"trade_{int(time.time() * 1000)}",
         "symbol": candidate["symbol"],
         "side": side,
-        "entry": entry,
-        "stop_loss": stop,
-        "take_profit": take_profit,
-        "risk_usd": round(risk_usd, 2),
+        "entry": round(entry, 8 if entry < 1 else 6),
+        "stop_loss": round(stop, 8 if stop < 1 else 6),
+        "take_profit": round(take_profit, 8 if take_profit < 1 else 6),
+        "risk_usd": round(risk_usd, 4),
         "score": candidate["score"],
         "quality": candidate["quality"],
         "status": "open",
@@ -325,29 +339,36 @@ def manage_open_trades() -> List[Dict]:
         if side == "long":
             hit_stop = price <= trade["stop_loss"]
             hit_tp = price >= trade["take_profit"]
-            pnl = (price - trade["entry"]) / trade["entry"] * trade["risk_usd"] * 8
         else:
             hit_stop = price >= trade["stop_loss"]
             hit_tp = price <= trade["take_profit"]
-            pnl = (trade["entry"] - price) / trade["entry"] * trade["risk_usd"] * 8
 
+        pnl = calc_trade_pnl(price, trade)
         age_seconds = int(time.time()) - int(trade["opened_at"])
         quality_drop = market_state[trade["symbol"]]["score"] < 0.35
         timed_exit = age_seconds > 900 and abs(pnl) < 0.20
 
         if hit_stop or hit_tp or quality_drop or timed_exit:
             trade["status"] = "closed"
-            trade["exit"] = round(price, 6)
+            trade["exit"] = round(price, 8 if price < 1 else 6)
             trade["closed_at"] = int(time.time())
-            trade["pnl_usd"] = round(pnl, 2)
-            trade["result"] = "win" if pnl > 0 else "loss"
-            trade["close_reason"] = (
-                "take_profit" if hit_tp else
-                "stop_loss" if hit_stop else
-                "quality_drop" if quality_drop else
-                "timed_exit"
-            )
-            bot_state["equity_usd"] = round(bot_state["equity_usd"] + trade["pnl_usd"], 2)
+            trade["duration_seconds"] = age_seconds
+            trade["pnl_usd"] = round(pnl, 4)
+
+            if hit_tp:
+                trade["result"] = "win"
+                trade["close_reason"] = "take_profit"
+            elif hit_stop:
+                trade["result"] = "loss"
+                trade["close_reason"] = "stop_loss"
+            elif quality_drop:
+                trade["result"] = "win" if pnl > 0 else "loss"
+                trade["close_reason"] = "quality_drop"
+            else:
+                trade["result"] = "win" if pnl > 0 else "loss"
+                trade["close_reason"] = "timed_exit"
+
+            bot_state["equity_usd"] = round(bot_state["equity_usd"] + trade["pnl_usd"], 4)
             set_symbol_cooldown(trade["symbol"])
             closed.append(dict(trade))
 
@@ -393,7 +414,7 @@ async def run_tick_cycle():
     ranked = []
     for symbol in SYMBOLS:
         data = market_state[symbol]
-        if data["price"] <= 0:
+        if data["price"] <= MIN_VALID_PRICE:
             continue
 
         side = "flat"
@@ -432,6 +453,10 @@ async def run_tick_cycle():
             break
         if has_open_trade_for_symbol(candidate["symbol"]):
             continue
+        if recent_signal_count_for_symbol(candidate["symbol"]) >= MAX_RECENT_SAME_SYMBOL_SIGNALS:
+            continue
+        if candidate["price"] <= MIN_VALID_PRICE:
+            continue
 
         signal = {
             "symbol": candidate["symbol"],
@@ -448,7 +473,7 @@ async def run_tick_cycle():
         signals.insert(0, signal)
         new_signals.append(signal)
 
-        if candidate["score"] >= 0.55:
+        if candidate["score"] >= MIN_SCORE_TO_OPEN:
             opened_trade = create_trade(candidate)
             trades.insert(0, opened_trade)
             break

@@ -4,7 +4,7 @@ import time
 from typing import Dict, List
 import httpx
 
-app = FastAPI(title="MEXC AI Bot Backend v10")
+app = FastAPI(title="MEXC AI Bot Backend v10.2 Clean Volatility")
 
 app.add_middleware(
     CORSMiddleware,
@@ -17,11 +17,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Watchlist plus propre pour test paper
 DESIRED_SYMBOLS = [
-    "BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT", "ADA/USDT",
-    "DOGE/USDT", "TRX/USDT", "AVAX/USDT", "LINK/USDT", "DOT/USDT",
-    "TON/USDT", "SHIB/USDT", "LTC/USDT", "BCH/USDT", "UNI/USDT",
-    "ATOM/USDT", "XLM/USDT", "ETC/USDT", "APT/USDT", "NEAR/USDT",
+    "BTC/USDT",
+    "ETH/USDT",
+    "SOL/USDT",
+    "XRP/USDT",
+    "ADA/USDT",
+    "DOGE/USDT",
+    "AVAX/USDT",
+    "LINK/USDT",
+    "DOT/USDT",
+    "LTC/USDT",
+    "BCH/USDT",
+    "UNI/USDT",
 ]
 
 SYMBOLS = list(DESIRED_SYMBOLS)
@@ -29,16 +38,16 @@ KRAKEN_PAIRS: Dict[str, str] = {}
 
 INITIAL_EQUITY = 1000.0
 MARKET_CACHE_SECONDS = 30
-SYMBOL_COOLDOWN_SECONDS = 180
-MIN_VALID_PRICE = 0.00001
-MIN_SCORE_TO_OPEN = 0.60
+SYMBOL_COOLDOWN_SECONDS = 300
+MIN_VALID_PRICE = 0.0001
+MIN_SCORE_TO_OPEN = 0.63
 MAX_RECENT_SAME_SYMBOL_SIGNALS = 2
-MAX_NEW_TRADES_PER_10_MIN = 3
+MAX_NEW_TRADES_PER_10_MIN = 2
 RECENT_TRADE_WINDOW_SECONDS = 600
 
-BREAK_EVEN_TRIGGER_R = 0.35
-TRAILING_TRIGGER_R = 0.75
-TRAILING_LOCK_R = 0.30
+BREAK_EVEN_TRIGGER_R = 0.45
+TRAILING_TRIGGER_R = 1.00
+TRAILING_LOCK_R = 0.45
 
 bot_state = {
     "running": False,
@@ -48,7 +57,7 @@ bot_state = {
     "mode": "paper",
     "equity_usd": INITIAL_EQUITY,
     "starting_equity_usd": INITIAL_EQUITY,
-    "max_open_positions": 5,
+    "max_open_positions": 4,
     "risk_per_trade_pct": 0.5,
     "symbols": SYMBOLS,
     "tick_count": 0,
@@ -192,13 +201,13 @@ async def fetch_real_market_data(force: bool = False) -> bool:
             trend_strength = round(abs_change, 3)
 
             quality_score = round(
-                (momentum_score * 0.40) + (direction_score * 0.20) + (volume_score * 0.40),
+                (momentum_score * 0.45) + (direction_score * 0.15) + (volume_score * 0.40),
                 3,
             )
 
-            if quality_score >= 0.70:
+            if quality_score >= 0.74:
                 quality = "high"
-            elif quality_score >= 0.52:
+            elif quality_score >= 0.58:
                 quality = "medium"
             else:
                 quality = "low"
@@ -291,7 +300,7 @@ def get_market_regime() -> Dict:
     else:
         regime = "neutral"
 
-    allow_new_trades = avg_score >= 0.35
+    allow_new_trades = avg_score >= 0.38
 
     return {
         "avg_change_24h": round(avg_change, 3),
@@ -360,11 +369,11 @@ def create_trade(candidate: Dict) -> Dict:
     entry = candidate["price"]
 
     if candidate["side"] == "long":
-        stop = entry * 0.993
-        take_profit = entry * 1.018
+        stop = entry * 0.992
+        take_profit = entry * 1.024
     else:
-        stop = entry * 1.007
-        take_profit = entry * 0.982
+        stop = entry * 1.008
+        take_profit = entry * 0.976
 
     return {
         "id": f"trade_{int(time.time() * 1000)}",
@@ -425,8 +434,8 @@ def manage_open_trades() -> List[Dict]:
 
         pnl = calc_trade_pnl(price, trade)
         age_seconds = int(time.time()) - int(trade["opened_at"])
-        quality_drop = market_state[trade["symbol"]]["score"] < 0.35
-        timed_exit = age_seconds > 900 and abs(pnl) < 0.20
+        quality_drop = market_state[trade["symbol"]]["score"] < 0.33
+        timed_exit = age_seconds > 1800 and abs(pnl) < 0.35
 
         if hit_stop or hit_tp or quality_drop or timed_exit:
             trade["status"] = "closed"
@@ -505,16 +514,16 @@ async def run_tick_cycle():
             continue
 
         side = "flat"
-        if data["score"] >= 0.62 and data["change_24h"] >= 0.20:
+        if data["score"] >= 0.66 and data["change_24h"] >= 0.35:
             side = "long"
-        elif data["score"] >= 0.62 and data["change_24h"] <= -0.20:
+        elif data["score"] >= 0.66 and data["change_24h"] <= -0.35:
             side = "short"
-        elif data["score"] >= 0.55 and data["trend_strength"] >= 0.55:
+        elif data["score"] >= 0.60 and data["trend_strength"] >= 1.2:
             side = "long" if data["change_24h"] >= 0 else "short"
 
-        if regime["regime"] == "bullish" and side == "short" and data["score"] < 0.72:
+        if regime["regime"] == "bullish" and side == "short" and data["score"] < 0.78:
             side = "flat"
-        if regime["regime"] == "bearish" and side == "long" and data["score"] < 0.72:
+        if regime["regime"] == "bearish" and side == "long" and data["score"] < 0.78:
             side = "flat"
 
         ranked.append(

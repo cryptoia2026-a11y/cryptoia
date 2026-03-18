@@ -4,7 +4,7 @@ import time
 from typing import Dict, List
 import httpx
 
-app = FastAPI(title="MEXC AI Bot Backend v8")
+app = FastAPI(title="MEXC AI Bot Backend v8.1 Top20")
 
 app.add_middleware(
     CORSMiddleware,
@@ -17,18 +17,55 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-SYMBOLS = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT"]
+SYMBOLS = [
+    "BTC/USDT",
+    "ETH/USDT",
+    "SOL/USDT",
+    "XRP/USDT",
+    "ADA/USDT",
+    "DOGE/USDT",
+    "TRX/USDT",
+    "AVAX/USDT",
+    "LINK/USDT",
+    "DOT/USDT",
+    "TON/USDT",
+    "SHIB/USDT",
+    "LTC/USDT",
+    "BCH/USDT",
+    "UNI/USDT",
+    "ATOM/USDT",
+    "XLM/USDT",
+    "ETC/USDT",
+    "APT/USDT",
+    "NEAR/USDT",
+]
 
 KRAKEN_PAIRS = {
     "BTC/USDT": "XBTUSDT",
     "ETH/USDT": "ETHUSDT",
     "SOL/USDT": "SOLUSDT",
     "XRP/USDT": "XRPUSDT",
+    "ADA/USDT": "ADAUSDT",
+    "DOGE/USDT": "DOGEUSDT",
+    "TRX/USDT": "TRXUSDT",
+    "AVAX/USDT": "AVAXUSDT",
+    "LINK/USDT": "LINKUSDT",
+    "DOT/USDT": "DOTUSDT",
+    "TON/USDT": "TONUSDT",
+    "SHIB/USDT": "SHIBUSDT",
+    "LTC/USDT": "LTCUSDT",
+    "BCH/USDT": "BCHUSDT",
+    "UNI/USDT": "UNIUSDT",
+    "ATOM/USDT": "ATOMUSDT",
+    "XLM/USDT": "XLMUSDT",
+    "ETC/USDT": "ETCUSDT",
+    "APT/USDT": "APTUSDT",
+    "NEAR/USDT": "NEARUSDT",
 }
 
 INITIAL_EQUITY = 1000.0
 MARKET_CACHE_SECONDS = 30
-SYMBOL_COOLDOWN_SECONDS = 180
+SYMBOL_COOLDOWN_SECONDS = 120
 
 bot_state = {
     "running": False,
@@ -38,7 +75,7 @@ bot_state = {
     "mode": "paper",
     "equity_usd": INITIAL_EQUITY,
     "starting_equity_usd": INITIAL_EQUITY,
-    "max_open_positions": 3,
+    "max_open_positions": 5,
     "risk_per_trade_pct": 0.5,
     "symbols": SYMBOLS,
     "tick_count": 0,
@@ -75,7 +112,7 @@ async def fetch_real_market_data(force: bool = False) -> bool:
         pair_list = ",".join(KRAKEN_PAIRS.values())
         url = "https://api.kraken.com/0/public/Ticker"
 
-        async with httpx.AsyncClient(timeout=20.0) as client:
+        async with httpx.AsyncClient(timeout=25.0) as client:
             response = await client.get(
                 url,
                 params={"pair": pair_list},
@@ -103,19 +140,19 @@ async def fetch_real_market_data(force: bool = False) -> bool:
                 change_24h = ((price - open_price) / open_price) * 100.0
 
             abs_change = abs(change_24h)
-            momentum_score = max(min((abs_change + 2) / 8, 1.0), 0.0)
+            momentum_score = max(min((abs_change + 1.5) / 7.5, 1.0), 0.0)
             direction_score = max(min((change_24h + 8) / 16, 1.0), 0.0)
             volume_score = min(volume / 100000.0, 1.0)
             trend_strength = round(abs(change_24h), 3)
 
             quality_score = round(
-                (momentum_score * 0.45) + (direction_score * 0.25) + (volume_score * 0.30),
+                (momentum_score * 0.40) + (direction_score * 0.20) + (volume_score * 0.40),
                 3,
             )
 
-            if quality_score >= 0.72:
+            if quality_score >= 0.70:
                 quality = "high"
-            elif quality_score >= 0.58:
+            elif quality_score >= 0.52:
                 quality = "medium"
             else:
                 quality = "low"
@@ -253,8 +290,8 @@ def manage_open_trades() -> List[Dict]:
             pnl = (trade["entry"] - price) / trade["entry"] * trade["risk_usd"] * 8
 
         age_seconds = int(time.time()) - int(trade["opened_at"])
-        quality_drop = market_state[trade["symbol"]]["score"] < 0.42
-        timed_exit = age_seconds > 600 and abs(pnl) < 0.25
+        quality_drop = market_state[trade["symbol"]]["score"] < 0.35
+        timed_exit = age_seconds > 900 and abs(pnl) < 0.20
 
         if hit_stop or hit_tp or quality_drop or timed_exit:
             trade["status"] = "closed"
@@ -307,10 +344,7 @@ async def run_tick_cycle():
 
     ok = await fetch_real_market_data()
     if not ok:
-        return {
-            "ok": False,
-            "message": bot_state["last_error"] or "Market data fetch failed",
-        }
+        return {"ok": False, "message": bot_state["last_error"] or "Market data fetch failed"}
 
     closed_trades = manage_open_trades()
 
@@ -321,11 +355,11 @@ async def run_tick_cycle():
             continue
 
         side = "flat"
-        if data["score"] >= 0.70 and data["change_24h"] >= 0.35:
+        if data["score"] >= 0.62 and data["change_24h"] >= 0.20:
             side = "long"
-        elif data["score"] >= 0.70 and data["change_24h"] <= -0.35:
+        elif data["score"] >= 0.62 and data["change_24h"] <= -0.20:
             side = "short"
-        elif data["score"] >= 0.60 and data["trend_strength"] >= 0.60:
+        elif data["score"] >= 0.55 and data["trend_strength"] >= 0.55:
             side = "long" if data["change_24h"] >= 0 else "short"
 
         ranked.append(
@@ -342,7 +376,7 @@ async def run_tick_cycle():
             }
         )
 
-    ranked.sort(key=lambda x: (x["score"], x["trend_strength"]), reverse=True)
+    ranked.sort(key=lambda x: (x["score"], x["trend_strength"], x["volume"]), reverse=True)
 
     new_signals = []
     opened_trade = None
@@ -366,13 +400,13 @@ async def run_tick_cycle():
             "volume": candidate["volume"],
             "trend_strength": candidate["trend_strength"],
             "quality": candidate["quality"],
-            "reason": "trend + momentum + volume + cooldown filter",
+            "reason": "top20 trend + momentum + volume + cooldown filter",
             "created_at": int(time.time()),
         }
         signals.insert(0, signal)
         new_signals.append(signal)
 
-        if candidate["score"] >= 0.60:
+        if candidate["score"] >= 0.55:
             opened_trade = create_trade(candidate)
             trades.insert(0, opened_trade)
             break
@@ -431,22 +465,22 @@ def get_state():
 
 @app.get("/api/v1/signals")
 def get_signals():
-    return {"items": signals[:20]}
+    return {"items": signals[:40]}
 
 
 @app.get("/api/v1/trades")
 def get_trades():
-    return {"items": trades[:50]}
+    return {"items": trades[:100]}
 
 
 @app.get("/api/v1/open-trades")
 def api_open_trades():
-    return {"items": get_open_trades()[:20]}
+    return {"items": get_open_trades()[:30]}
 
 
 @app.get("/api/v1/closed-trades")
 def api_closed_trades():
-    return {"items": get_closed_trades()[:20]}
+    return {"items": get_closed_trades()[:30]}
 
 
 @app.get("/api/v1/stats")

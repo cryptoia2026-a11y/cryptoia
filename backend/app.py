@@ -4,7 +4,7 @@ import time
 from typing import Dict, List
 import httpx
 
-app = FastAPI(title="MEXC AI Bot Backend v10.2 Clean Volatility")
+app = FastAPI(title="MEXC AI Bot Backend v10.3 Aggressive Paper Test")
 
 app.add_middleware(
     CORSMiddleware,
@@ -17,7 +17,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Watchlist plus propre pour test paper
 DESIRED_SYMBOLS = [
     "BTC/USDT",
     "ETH/USDT",
@@ -31,6 +30,9 @@ DESIRED_SYMBOLS = [
     "LTC/USDT",
     "BCH/USDT",
     "UNI/USDT",
+    "GRASS/USDT",
+    "HYPE/USDT",
+    "RIVER/USDT",
 ]
 
 SYMBOLS = list(DESIRED_SYMBOLS)
@@ -49,6 +51,8 @@ BREAK_EVEN_TRIGGER_R = 0.45
 TRAILING_TRIGGER_R = 1.00
 TRAILING_LOCK_R = 0.45
 
+SIMULATED_LEVERAGE = 10.0
+
 bot_state = {
     "running": False,
     "auto_enabled": False,
@@ -58,7 +62,7 @@ bot_state = {
     "equity_usd": INITIAL_EQUITY,
     "starting_equity_usd": INITIAL_EQUITY,
     "max_open_positions": 4,
-    "risk_per_trade_pct": 0.5,
+    "risk_per_trade_pct": 5.0,  # 50$ par trade sur 1000$
     "symbols": SYMBOLS,
     "tick_count": 0,
     "last_error": "",
@@ -262,10 +266,9 @@ def recent_opened_trade_count() -> int:
 def calc_trade_pnl(price_now: float, trade: Dict) -> float:
     if trade["entry"] <= 0 or price_now <= 0:
         return 0.0
-    multiplier = 8.0
     if trade["side"] == "long":
-        return ((price_now - trade["entry"]) / trade["entry"]) * trade["risk_usd"] * multiplier
-    return ((trade["entry"] - price_now) / trade["entry"]) * trade["risk_usd"] * multiplier
+        return ((price_now - trade["entry"]) / trade["entry"]) * trade["risk_usd"] * SIMULATED_LEVERAGE
+    return ((trade["entry"] - price_now) / trade["entry"]) * trade["risk_usd"] * SIMULATED_LEVERAGE
 
 
 def calc_trade_r(price_now: float, trade: Dict) -> float:
@@ -417,11 +420,11 @@ def manage_open_trades() -> List[Dict]:
         if current_r >= TRAILING_TRIGGER_R:
             trade["trailing_active"] = True
             if trade["side"] == "long":
-                desired_stop = trade["entry"] * (1 + (TRAILING_LOCK_R / 8.0))
+                desired_stop = trade["entry"] * (1 + (TRAILING_LOCK_R / SIMULATED_LEVERAGE))
                 if desired_stop > trade["stop_loss"]:
                     trade["stop_loss"] = round_price(desired_stop)
             else:
-                desired_stop = trade["entry"] * (1 - (TRAILING_LOCK_R / 8.0))
+                desired_stop = trade["entry"] * (1 - (TRAILING_LOCK_R / SIMULATED_LEVERAGE))
                 if desired_stop < trade["stop_loss"]:
                     trade["stop_loss"] = round_price(desired_stop)
 
@@ -435,7 +438,7 @@ def manage_open_trades() -> List[Dict]:
         pnl = calc_trade_pnl(price, trade)
         age_seconds = int(time.time()) - int(trade["opened_at"])
         quality_drop = market_state[trade["symbol"]]["score"] < 0.33
-        timed_exit = age_seconds > 1800 and abs(pnl) < 0.35
+        timed_exit = age_seconds > 3600 and abs(pnl) < 5.0
 
         if hit_stop or hit_tp or quality_drop or timed_exit:
             trade["status"] = "closed"
@@ -615,6 +618,7 @@ def get_config():
         "auto_enabled": bot_state["auto_enabled"],
         "auto_interval_seconds": bot_state["auto_interval_seconds"],
         "valid_kraken_pairs": KRAKEN_PAIRS,
+        "simulated_leverage": SIMULATED_LEVERAGE,
     }
 
 
@@ -634,6 +638,7 @@ def get_state():
         "cooldowns": symbol_cooldowns,
         "valid_kraken_pairs": KRAKEN_PAIRS,
         "market_regime": get_market_regime(),
+        "simulated_leverage": SIMULATED_LEVERAGE,
     }
 
 

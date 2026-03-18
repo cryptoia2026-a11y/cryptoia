@@ -4,7 +4,7 @@ import time
 from typing import Dict, List
 import httpx
 
-app = FastAPI(title="MEXC AI Bot Backend v8.3 Fix")
+app = FastAPI(title="MEXC AI Bot Backend v9")
 
 app.add_middleware(
     CORSMiddleware,
@@ -82,6 +82,22 @@ trades: List[Dict] = []
 symbol_cooldowns: Dict[str, int] = {s: 0 for s in SYMBOLS}
 
 last_market_fetch_ts = 0.0
+
+
+def round_price(value: float) -> float:
+    return round(value, 8 if value < 1 else 6)
+
+
+def format_duration(seconds: int) -> str:
+    seconds = max(0, int(seconds))
+    h = seconds // 3600
+    m = (seconds % 3600) // 60
+    s = seconds % 60
+    if h > 0:
+        return f"{h}h {m}m {s}s"
+    if m > 0:
+        return f"{m}m {s}s"
+    return f"{s}s"
 
 
 async def refresh_valid_kraken_pairs() -> bool:
@@ -203,7 +219,7 @@ async def fetch_real_market_data(force: bool = False) -> bool:
                 quality = "low"
 
             market_state[symbol] = {
-                "price": round(price, 8 if price < 1 else 6),
+                "price": round_price(price),
                 "change_24h": round(change_24h, 3),
                 "volume": round(volume, 2),
                 "score": quality_score,
@@ -253,24 +269,33 @@ def calc_trade_pnl(price_now: float, trade: Dict) -> float:
     return pnl
 
 
-def get_open_trades() -> List[Dict]:
-    out = []
-    for t in trades:
-        if t["status"] != "open":
-            continue
+def enrich_trade_runtime(trade: Dict) -> Dict:
+    t = dict(trade)
+    now_ts = int(time.time())
 
-        price = market_state[t["symbol"]]["price"]
+    opened_at = int(t.get("opened_at", now_ts))
+    closed_at = t.get("closed_at")
+    end_ts = int(closed_at) if closed_at else now_ts
+    duration_seconds = max(0, end_ts - opened_at)
+
+    t["duration_seconds"] = duration_seconds
+    t["duration_text"] = format_duration(duration_seconds)
+
+    if t.get("status") == "open":
+        price = market_state.get(t["symbol"], {}).get("price", 0.0)
         unrealized = calc_trade_pnl(price, t)
+        t["current_price"] = round_price(price)
+        t["unrealized_pnl_usd"] = round(unrealized, 4)
 
-        x = dict(t)
-        x["current_price"] = round(price, 8 if price < 1 else 6)
-        x["unrealized_pnl_usd"] = round(unrealized, 4)
-        out.append(x)
-    return out
+    return t
+
+
+def get_open_trades() -> List[Dict]:
+    return [enrich_trade_runtime(t) for t in trades if t["status"] == "open"]
 
 
 def get_closed_trades() -> List[Dict]:
-    return [t for t in trades if t["status"] == "closed"]
+    return [enrich_trade_runtime(t) for t in trades if t["status"] == "closed"]
 
 
 def get_stats() -> Dict:
@@ -312,14 +337,15 @@ def create_trade(candidate: Dict) -> Dict:
         "id": f"trade_{int(time.time() * 1000)}",
         "symbol": candidate["symbol"],
         "side": side,
-        "entry": round(entry, 8 if entry < 1 else 6),
-        "stop_loss": round(stop, 8 if stop < 1 else 6),
-        "take_profit": round(take_profit, 8 if take_profit < 1 else 6),
+        "entry": round_price(entry),
+        "stop_loss": round_price(stop),
+        "take_profit": round_price(take_profit),
         "risk_usd": round(risk_usd, 4),
         "score": candidate["score"],
         "quality": candidate["quality"],
         "status": "open",
         "opened_at": int(time.time()),
+        "entry_reason": candidate.get("reason", ""),
     }
 
 
@@ -334,9 +360,7 @@ def manage_open_trades() -> List[Dict]:
         if not price:
             continue
 
-        side = trade["side"]
-
-        if side == "long":
+        if trade["side"] == "long":
             hit_stop = price <= trade["stop_loss"]
             hit_tp = price >= trade["take_profit"]
         else:
@@ -350,9 +374,10 @@ def manage_open_trades() -> List[Dict]:
 
         if hit_stop or hit_tp or quality_drop or timed_exit:
             trade["status"] = "closed"
-            trade["exit"] = round(price, 8 if price < 1 else 6)
+            trade["exit"] = round_price(price)
             trade["closed_at"] = int(time.time())
             trade["duration_seconds"] = age_seconds
+            trade["duration_text"] = format_duration(age_seconds)
             trade["pnl_usd"] = round(pnl, 4)
 
             if hit_tp:
@@ -370,7 +395,7 @@ def manage_open_trades() -> List[Dict]:
 
             bot_state["equity_usd"] = round(bot_state["equity_usd"] + trade["pnl_usd"], 4)
             set_symbol_cooldown(trade["symbol"])
-            closed.append(dict(trade))
+            closed.append(enrich_trade_runtime(trade))
 
     return closed
 
@@ -476,6 +501,7 @@ async def run_tick_cycle():
         if candidate["score"] >= MIN_SCORE_TO_OPEN:
             opened_trade = create_trade(candidate)
             trades.insert(0, opened_trade)
+            opened_trade = enrich_trade_runtime(opened_trade)
             break
 
     return {
@@ -539,7 +565,7 @@ def get_signals():
 
 @app.get("/api/v1/trades")
 def get_trades():
-    return {"items": trades[:100]}
+    return {"items": [enrich_trade_runtime(t) for t in trades[:100]]}
 
 
 @app.get("/api/v1/open-trades")

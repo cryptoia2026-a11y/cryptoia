@@ -4,7 +4,7 @@ import time
 from typing import Dict, List
 import httpx
 
-app = FastAPI(title="MEXC AI Bot Backend v10.3 Aggressive Paper Test")
+app = FastAPI(title="MEXC AI Bot Backend v10.4 Intelligent Entries")
 
 app.add_middleware(
     CORSMiddleware,
@@ -46,14 +46,18 @@ INITIAL_EQUITY = 1000.0
 MARKET_CACHE_SECONDS = 30
 SYMBOL_COOLDOWN_SECONDS = 300
 MIN_VALID_PRICE = 0.0001
-MIN_SCORE_TO_OPEN = 0.63
+MIN_SCORE_TO_OPEN = 0.66
 MAX_RECENT_SAME_SYMBOL_SIGNALS = 2
 MAX_NEW_TRADES_PER_10_MIN = 2
 RECENT_TRADE_WINDOW_SECONDS = 600
 
-BREAK_EVEN_TRIGGER_R = 0.45
-TRAILING_TRIGGER_R = 1.00
-TRAILING_LOCK_R = 0.45
+BREAK_EVEN_TRIGGER_R = 0.70
+TRAILING_TRIGGER_R = 1.40
+TRAILING_LOCK_R = 0.70
+
+MIN_HOLD_SECONDS = 180
+TIMED_EXIT_SECONDS = 5400
+TIMED_EXIT_MAX_ABS_PNL = 8.0
 
 SIMULATED_LEVERAGE = 10.0
 
@@ -66,13 +70,25 @@ bot_state = {
     "equity_usd": INITIAL_EQUITY,
     "starting_equity_usd": INITIAL_EQUITY,
     "max_open_positions": 4,
-    "risk_per_trade_pct": 5.0,  # 50$ par trade sur 1000$
+    "risk_per_trade_pct": 5.0,  # ~50$ sur 1000$
     "symbols": SYMBOLS,
     "tick_count": 0,
     "last_error": "",
 }
 
 market_state: Dict[str, Dict] = {
+    s: {
+        "price": 0.0,
+        "change_24h": 0.0,
+        "volume": 0.0,
+        "score": 0.0,
+        "trend_strength": 0.0,
+        "quality": "low",
+    }
+    for s in SYMBOLS
+}
+
+previous_market_state: Dict[str, Dict] = {
     s: {
         "price": 0.0,
         "change_24h": 0.0,
@@ -149,7 +165,7 @@ async def refresh_valid_kraken_pairs() -> bool:
 
 
 async def fetch_real_market_data(force: bool = False) -> bool:
-    global last_market_fetch_ts
+    global last_market_fetch_ts, previous_market_state
 
     now = time.time()
     if not force and last_market_fetch_ts and (now - last_market_fetch_ts) < MARKET_CACHE_SECONDS:
@@ -180,6 +196,8 @@ async def fetch_real_market_data(force: bool = False) -> bool:
             raise Exception(f"Kraken error: {payload['error']}")
 
         result = payload.get("result", {})
+
+        previous_market_state = {k: dict(v) for k, v in market_state.items()}
 
         for s in DESIRED_SYMBOLS:
             market_state[s] = {
@@ -307,7 +325,7 @@ def get_market_regime() -> Dict:
     else:
         regime = "neutral"
 
-    allow_new_trades = avg_score >= 0.38
+    allow_new_trades = avg_score >= 0.40
 
     return {
         "avg_change_24h": round(avg_change, 3),
@@ -371,16 +389,46 @@ def get_stats() -> Dict:
     }
 
 
+def is_continuation_signal(symbol: str, current: Dict, previous: Dict, side: str) -> bool:
+    prev_price = float(previous.get("price", 0.0))
+    prev_score = float(previous.get("score", 0.0))
+    prev_change = float(previous.get("change_24h", 0.0))
+    prev_trend = float(previous.get("trend_strength", 0.0))
+
+    if prev_price <= 0:
+        return True
+
+    price_delta = (float(current["price"]) - prev_price) / prev_price * 100.0
+    score_delta = float(current["score"]) - prev_score
+    change_delta = float(current["change_24h"]) - prev_change
+    trend_delta = float(current["trend_strength"]) - prev_trend
+
+    if side == "long":
+        return (
+            price_delta >= -0.15
+            and score_delta >= -0.03
+            and change_delta >= -0.20
+            and trend_delta >= -0.20
+        )
+
+    return (
+        price_delta <= 0.15
+        and score_delta >= -0.03
+        and change_delta <= 0.20
+        and trend_delta >= -0.20
+    )
+
+
 def create_trade(candidate: Dict) -> Dict:
     risk_usd = bot_state["equity_usd"] * (bot_state["risk_per_trade_pct"] / 100.0)
     entry = candidate["price"]
 
     if candidate["side"] == "long":
-        stop = entry * 0.992
-        take_profit = entry * 1.024
+        stop = entry * 0.991
+        take_profit = entry * 1.030
     else:
-        stop = entry * 1.008
-        take_profit = entry * 0.976
+        stop = entry * 1.009
+        take_profit = entry * 0.970
 
     return {
         "id": f"trade_{int(time.time() * 1000)}",
@@ -441,8 +489,8 @@ def manage_open_trades() -> List[Dict]:
 
         pnl = calc_trade_pnl(price, trade)
         age_seconds = int(time.time()) - int(trade["opened_at"])
-        quality_drop = market_state[trade["symbol"]]["score"] < 0.33
-        timed_exit = age_seconds > 3600 and abs(pnl) < 5.0
+        quality_drop = age_seconds >= MIN_HOLD_SECONDS and market_state[trade["symbol"]]["score"] < 0.30
+        timed_exit = age_seconds > TIMED_EXIT_SECONDS and abs(pnl) < TIMED_EXIT_MAX_ABS_PNL
 
         if hit_stop or hit_tp or quality_drop or timed_exit:
             trade["status"] = "closed"
@@ -498,6 +546,14 @@ def reset_paper_account() -> None:
             "trend_strength": 0.0,
             "quality": "low",
         }
+        previous_market_state[s] = {
+            "price": 0.0,
+            "change_24h": 0.0,
+            "volume": 0.0,
+            "score": 0.0,
+            "trend_strength": 0.0,
+            "quality": "low",
+        }
         symbol_cooldowns[s] = 0
 
 
@@ -517,20 +573,24 @@ async def run_tick_cycle():
     ranked = []
     for symbol in SYMBOLS:
         data = market_state[symbol]
+        prev = previous_market_state.get(symbol, {})
         if data["price"] <= MIN_VALID_PRICE:
             continue
 
         side = "flat"
-        if data["score"] >= 0.66 and data["change_24h"] >= 0.35:
+        if data["score"] >= 0.70 and data["change_24h"] >= 0.40:
             side = "long"
-        elif data["score"] >= 0.66 and data["change_24h"] <= -0.35:
+        elif data["score"] >= 0.70 and data["change_24h"] <= -0.40:
             side = "short"
-        elif data["score"] >= 0.60 and data["trend_strength"] >= 1.2:
+        elif data["score"] >= 0.64 and data["trend_strength"] >= 1.4:
             side = "long" if data["change_24h"] >= 0 else "short"
 
-        if regime["regime"] == "bullish" and side == "short" and data["score"] < 0.78:
+        if side != "flat" and not is_continuation_signal(symbol, data, prev, side):
             side = "flat"
-        if regime["regime"] == "bearish" and side == "long" and data["score"] < 0.78:
+
+        if regime["regime"] == "bullish" and side == "short" and data["score"] < 0.80:
+            side = "flat"
+        if regime["regime"] == "bearish" and side == "long" and data["score"] < 0.80:
             side = "flat"
 
         ranked.append(
@@ -544,6 +604,8 @@ async def run_tick_cycle():
                 "quality": data["quality"],
                 "side": side,
                 "cooldown": is_symbol_on_cooldown(symbol),
+                "prev_score": float(prev.get("score", 0.0)),
+                "prev_change_24h": float(prev.get("change_24h", 0.0)),
             }
         )
 
@@ -576,7 +638,10 @@ async def run_tick_cycle():
                 "volume": candidate["volume"],
                 "trend_strength": candidate["trend_strength"],
                 "quality": candidate["quality"],
-                "reason": f"regime={regime['regime']} + trend + momentum + volume + cooldown filter",
+                "reason": (
+                    f"regime={regime['regime']} + continuation + trend + momentum + volume "
+                    f"(prev_score={candidate['prev_score']:.3f}, prev_change={candidate['prev_change_24h']:.3f})"
+                ),
                 "created_at": int(time.time()),
             }
             signals.insert(0, signal)

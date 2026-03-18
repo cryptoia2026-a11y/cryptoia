@@ -13,8 +13,9 @@ function badgeStyle(type) {
 
   if (type === "long") return { ...base, background: "#123d26", color: "#5df28c" };
   if (type === "short") return { ...base, background: "#4a1626", color: "#ff9b9b" };
-  if (type === "open") return { ...base, background: "#12304a", color: "#8ecbff" };
-  if (type === "closed") return { ...base, background: "#3f3f3f", color: "#ffffff" };
+  if (type === "high") return { ...base, background: "#123d26", color: "#5df28c" };
+  if (type === "medium") return { ...base, background: "#3e3612", color: "#ffd76a" };
+  if (type === "low") return { ...base, background: "#3b3b3b", color: "#d6d6d6" };
   if (type === "win") return { ...base, background: "#123d26", color: "#5df28c" };
   if (type === "loss") return { ...base, background: "#4a1626", color: "#ff9b9b" };
 
@@ -160,7 +161,6 @@ export default function Home() {
       await callPost(`${API_BASE}/api/v1/bot/start`, "Impossible de démarrer le bot.");
       await refreshAll();
     } catch (err) {
-      console.error(err);
       setError(err.message || "Impossible de démarrer le bot.");
     }
   }
@@ -171,7 +171,6 @@ export default function Home() {
       await callPost(`${API_BASE}/api/v1/bot/stop`, "Impossible d'arrêter le bot.");
       await refreshAll();
     } catch (err) {
-      console.error(err);
       setError(err.message || "Impossible d'arrêter le bot.");
     }
   }
@@ -182,7 +181,6 @@ export default function Home() {
       await callPost(`${API_BASE}/api/v1/bot/tick`, "Impossible de lancer un tick.");
       await refreshAll();
     } catch (err) {
-      console.error(err);
       setError(err.message || "Impossible de lancer un tick.");
     }
   }
@@ -193,7 +191,6 @@ export default function Home() {
       await callPost(`${API_BASE}/api/v1/market/refresh`, "Impossible de forcer le refresh marché.");
       await refreshAll();
     } catch (err) {
-      console.error(err);
       setError(err.message || "Impossible de forcer le refresh marché.");
     }
   }
@@ -204,7 +201,6 @@ export default function Home() {
       await callPost(`${API_BASE}/api/v1/bot/reset`, "Impossible de reset le paper account.");
       await refreshAll();
     } catch (err) {
-      console.error(err);
       setError(err.message || "Impossible de reset le paper account.");
     }
   }
@@ -215,7 +211,6 @@ export default function Home() {
       await callPost(`${API_BASE}/api/v1/bot/auto-start`, "Impossible d'activer l'auto mode.");
       await refreshAll();
     } catch (err) {
-      console.error(err);
       setError(err.message || "Impossible d'activer l'auto mode.");
     }
   }
@@ -226,7 +221,6 @@ export default function Home() {
       await callPost(`${API_BASE}/api/v1/bot/auto-stop`, "Impossible de désactiver l'auto mode.");
       await refreshAll();
     } catch (err) {
-      console.error(err);
       setError(err.message || "Impossible de désactiver l'auto mode.");
     }
   }
@@ -241,7 +235,6 @@ export default function Home() {
       );
       await refreshAll();
     } catch (err) {
-      console.error(err);
       setError(err.message || "Impossible de changer l'intervalle.");
     }
   }
@@ -291,6 +284,8 @@ export default function Home() {
     ? lastUpdated.toLocaleTimeString("fr-CA")
     : "jamais";
 
+  const marketRows = state?.market ? Object.entries(state.market) : [];
+
   return (
     <main
       style={{
@@ -301,9 +296,9 @@ export default function Home() {
         fontFamily: "Arial, sans-serif",
       }}
     >
-      <h1 style={{ marginBottom: 8 }}>MEXC AI Trading Bot v7 Auto Pilot</h1>
+      <h1 style={{ marginBottom: 8 }}>MEXC AI Trading Bot v8 Smart Engine</h1>
       <p style={{ marginTop: 0 }}>
-        Tick manuel + mode automatique périodique en paper trading.
+        Moteur plus intelligent + interface plus professionnelle.
       </p>
 
       <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
@@ -328,12 +323,7 @@ export default function Home() {
 
           <div>
             <strong>Mode auto:</strong>{" "}
-            <span
-              style={{
-                color: state?.auto_enabled ? "#5df28c" : "#ff9b9b",
-                fontWeight: "bold",
-              }}
-            >
+            <span style={{ color: state?.auto_enabled ? "#5df28c" : "#ff9b9b", fontWeight: "bold" }}>
               {autoStatus}
             </span>
           </div>
@@ -357,9 +347,7 @@ export default function Home() {
             />
           </label>
           <button onClick={saveInterval}>Enregistrer intervalle</button>
-          <div>
-            <strong>Intervalle actuel:</strong> {state?.auto_interval_seconds ?? "-"} sec
-          </div>
+          <div><strong>Intervalle actuel:</strong> {state?.auto_interval_seconds ?? "-"} sec</div>
         </div>
       </div>
 
@@ -407,8 +395,35 @@ export default function Home() {
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
         <section style={cardStyle()}>
-          <h2>Configuration</h2>
-          <pre style={{ whiteSpace: "pre-wrap" }}>{JSON.stringify(config, null, 2)}</pre>
+          <h2>Marché</h2>
+          <table style={tableStyle()}>
+            <thead>
+              <tr>
+                <th style={thtd()}>Symbole</th>
+                <th style={thtd()}>Prix</th>
+                <th style={thtd()}>24h %</th>
+                <th style={thtd()}>Volume</th>
+                <th style={thtd()}>Score</th>
+                <th style={thtd()}>Qualité</th>
+              </tr>
+            </thead>
+            <tbody>
+              {marketRows.length === 0 ? (
+                <tr><td style={thtd()} colSpan={6}>Aucune donnée marché</td></tr>
+              ) : (
+                marketRows.map(([symbol, data]) => (
+                  <tr key={symbol}>
+                    <td style={thtd()}>{symbol}</td>
+                    <td style={thtd()}>{data.price}</td>
+                    <td style={{ ...thtd(), color: pnlColor(data.change_24h) }}>{data.change_24h}</td>
+                    <td style={thtd()}>{data.volume}</td>
+                    <td style={thtd()}>{data.score}</td>
+                    <td style={thtd()}><span style={badgeStyle(data.quality)}>{String(data.quality || "").toUpperCase()}</span></td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
         </section>
 
         <section style={cardStyle()}>
@@ -428,7 +443,7 @@ export default function Home() {
                 <th style={thtd()}>Entrée</th>
                 <th style={thtd()}>Prix actuel</th>
                 <th style={thtd()}>PnL flottant</th>
-                <th style={thtd()}>Score</th>
+                <th style={thtd()}>Qualité</th>
               </tr>
             </thead>
             <tbody>
@@ -442,7 +457,7 @@ export default function Home() {
                     <td style={thtd()}>{t.entry}</td>
                     <td style={thtd()}>{t.current_price}</td>
                     <td style={{ ...thtd(), color: pnlColor(t.unrealized_pnl_usd) }}>{t.unrealized_pnl_usd}</td>
-                    <td style={thtd()}>{t.score}</td>
+                    <td style={thtd()}><span style={badgeStyle(t.quality)}>{String(t.quality || "").toUpperCase()}</span></td>
                   </tr>
                 ))
               )}
@@ -458,22 +473,20 @@ export default function Home() {
                 <th style={thtd()}>Symbole</th>
                 <th style={thtd()}>Side</th>
                 <th style={thtd()}>Résultat</th>
-                <th style={thtd()}>Entrée</th>
-                <th style={thtd()}>Sortie</th>
+                <th style={thtd()}>Raison</th>
                 <th style={thtd()}>PnL</th>
               </tr>
             </thead>
             <tbody>
               {closedTrades.length === 0 ? (
-                <tr><td style={thtd()} colSpan={6}>Aucun trade fermé</td></tr>
+                <tr><td style={thtd()} colSpan={5}>Aucun trade fermé</td></tr>
               ) : (
                 closedTrades.map((t) => (
                   <tr key={t.id}>
                     <td style={thtd()}>{t.symbol}</td>
                     <td style={thtd()}><span style={badgeStyle(t.side)}>{t.side.toUpperCase()}</span></td>
-                    <td style={thtd()}><span style={badgeStyle(t.result)}>{(t.result || "").toUpperCase()}</span></td>
-                    <td style={thtd()}>{t.entry}</td>
-                    <td style={thtd()}>{t.exit}</td>
+                    <td style={thtd()}><span style={badgeStyle(t.result)}>{String(t.result || "").toUpperCase()}</span></td>
+                    <td style={thtd()}>{t.close_reason || "-"}</td>
                     <td style={{ ...thtd(), color: pnlColor(t.pnl_usd) }}>{t.pnl_usd}</td>
                   </tr>
                 ))
@@ -483,7 +496,7 @@ export default function Home() {
         </section>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
         <section style={cardStyle()}>
           <h2>Signaux</h2>
           <table style={tableStyle()}>
@@ -491,9 +504,9 @@ export default function Home() {
               <tr>
                 <th style={thtd()}>Symbole</th>
                 <th style={thtd()}>Side</th>
-                <th style={thtd()}>Prix</th>
                 <th style={thtd()}>24h %</th>
                 <th style={thtd()}>Score</th>
+                <th style={thtd()}>Qualité</th>
                 <th style={thtd()}>Créé</th>
               </tr>
             </thead>
@@ -505,9 +518,9 @@ export default function Home() {
                   <tr key={`${s.symbol}-${s.created_at}-${i}`}>
                     <td style={thtd()}>{s.symbol}</td>
                     <td style={thtd()}><span style={badgeStyle(s.side)}>{s.side.toUpperCase()}</span></td>
-                    <td style={thtd()}>{s.price}</td>
                     <td style={{ ...thtd(), color: pnlColor(s.change_24h) }}>{s.change_24h}</td>
                     <td style={thtd()}>{s.score}</td>
+                    <td style={thtd()}><span style={badgeStyle(s.quality)}>{String(s.quality || "").toUpperCase()}</span></td>
                     <td style={thtd()}>{formatTs(s.created_at)}</td>
                   </tr>
                 ))
@@ -517,10 +530,8 @@ export default function Home() {
         </section>
 
         <section style={cardStyle()}>
-          <h2>Tous les trades</h2>
-          <pre style={{ whiteSpace: "pre-wrap", maxHeight: 420, overflow: "auto" }}>
-            {JSON.stringify(trades, null, 2)}
-          </pre>
+          <h2>Configuration</h2>
+          <pre style={{ whiteSpace: "pre-wrap" }}>{JSON.stringify(config, null, 2)}</pre>
         </section>
       </div>
     </main>

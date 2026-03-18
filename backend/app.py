@@ -33,6 +33,10 @@ DESIRED_SYMBOLS = [
     "GRASS/USDT",
     "HYPE/USDT",
     "RIVER/USDT",
+    "TRUMP/USDT",
+    "ZEC/USDT",
+    "SUI/USDT",
+    "TAO/USDT",
 ]
 
 SYMBOLS = list(DESIRED_SYMBOLS)

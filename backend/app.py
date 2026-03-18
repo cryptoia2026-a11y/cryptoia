@@ -4,7 +4,7 @@ import time
 from typing import Dict, List
 import httpx
 
-app = FastAPI(title="MEXC AI Bot Backend v6")
+app = FastAPI(title="MEXC AI Bot Backend v7")
 
 app.add_middleware(
     CORSMiddleware,
@@ -30,6 +30,9 @@ INITIAL_EQUITY = 1000.0
 
 bot_state = {
     "running": False,
+    "auto_enabled": False,
+    "auto_interval_seconds": 30,
+    "last_auto_tick_ts": 0.0,
     "mode": "paper",
     "equity_usd": INITIAL_EQUITY,
     "starting_equity_usd": INITIAL_EQUITY,
@@ -230,15 +233,96 @@ def manage_open_trades() -> List[Dict]:
 def reset_paper_account() -> None:
     global last_market_fetch_ts
     bot_state["running"] = False
+    bot_state["auto_enabled"] = False
     bot_state["equity_usd"] = INITIAL_EQUITY
     bot_state["starting_equity_usd"] = INITIAL_EQUITY
     bot_state["tick_count"] = 0
     bot_state["last_error"] = ""
+    bot_state["last_auto_tick_ts"] = 0.0
     signals.clear()
     trades.clear()
     last_market_fetch_ts = 0.0
     for s in SYMBOLS:
         market_state[s] = {"price": 0.0, "change_24h": 0.0, "volume": 0.0, "score": 0.0}
+
+
+async def run_tick_cycle():
+    if not bot_state["running"]:
+        return {"ok": False, "message": "Bot not running"}
+
+    bot_state["tick_count"] += 1
+
+    ok = await fetch_real_market_data()
+    if not ok:
+        return {
+            "ok": False,
+            "message": bot_state["last_error"] or "Market data fetch failed",
+        }
+
+    closed_trades = manage_open_trades()
+
+    ranked = []
+    for symbol in SYMBOLS:
+        data = market_state[symbol]
+        if data["price"] <= 0:
+            continue
+
+        side = "flat"
+        if data["score"] >= 0.58:
+            side = "long" if data["change_24h"] >= 0 else "short"
+
+        ranked.append(
+            {
+                "symbol": symbol,
+                "price": data["price"],
+                "change_24h": data["change_24h"],
+                "volume": data["volume"],
+                "score": data["score"],
+                "side": side,
+            }
+        )
+
+    ranked.sort(key=lambda x: x["score"], reverse=True)
+
+    new_signals = []
+    opened_trade = None
+
+    for candidate in ranked:
+        if candidate["side"] == "flat":
+            continue
+        if get_open_positions_count() >= bot_state["max_open_positions"]:
+            break
+        if has_open_trade_for_symbol(candidate["symbol"]):
+            continue
+
+        signal = {
+            "symbol": candidate["symbol"],
+            "side": candidate["side"],
+            "score": candidate["score"],
+            "price": candidate["price"],
+            "change_24h": candidate["change_24h"],
+            "volume": candidate["volume"],
+            "reason": "real price momentum + volume ranking",
+            "created_at": int(time.time()),
+        }
+        signals.insert(0, signal)
+        new_signals.append(signal)
+
+        if candidate["score"] >= 0.58:
+            opened_trade = create_trade(candidate)
+            trades.insert(0, opened_trade)
+            break
+
+    return {
+        "ok": True,
+        "tick_count": bot_state["tick_count"],
+        "ranked": ranked,
+        "new_signals": new_signals,
+        "opened_trade": opened_trade,
+        "closed_trades": closed_trades,
+        "equity_usd": bot_state["equity_usd"],
+        "stats": get_stats(),
+    }
 
 
 @app.get("/")
@@ -259,6 +343,8 @@ def get_config():
         "max_open_positions": bot_state["max_open_positions"],
         "risk_per_trade_pct": bot_state["risk_per_trade_pct"],
         "symbols": bot_state["symbols"],
+        "auto_enabled": bot_state["auto_enabled"],
+        "auto_interval_seconds": bot_state["auto_interval_seconds"],
     }
 
 
@@ -266,6 +352,9 @@ def get_config():
 def get_state():
     return {
         "running": bot_state["running"],
+        "auto_enabled": bot_state["auto_enabled"],
+        "auto_interval_seconds": bot_state["auto_interval_seconds"],
+        "last_auto_tick_ts": bot_state["last_auto_tick_ts"],
         "mode": bot_state["mode"],
         "equity_usd": bot_state["equity_usd"],
         "tick_count": bot_state["tick_count"],
@@ -324,90 +413,74 @@ def start_bot():
 @app.post("/api/v1/bot/stop")
 def stop_bot():
     bot_state["running"] = False
+    bot_state["auto_enabled"] = False
     return {"ok": True, "running": False}
+
+
+@app.post("/api/v1/bot/auto-start")
+def auto_start():
+    bot_state["running"] = True
+    bot_state["auto_enabled"] = True
+    bot_state["last_error"] = ""
+    return {"ok": True, "auto_enabled": True}
+
+
+@app.post("/api/v1/bot/auto-stop")
+def auto_stop():
+    bot_state["auto_enabled"] = False
+    return {"ok": True, "auto_enabled": False}
+
+
+@app.post("/api/v1/bot/set-interval")
+def set_interval(payload: Dict):
+    seconds = int(payload.get("seconds", 30))
+    seconds = max(10, min(seconds, 300))
+    bot_state["auto_interval_seconds"] = seconds
+    return {"ok": True, "auto_interval_seconds": seconds}
 
 
 @app.post("/api/v1/bot/tick")
 async def tick_bot():
     try:
-        if not bot_state["running"]:
-            return {"ok": False, "message": "Bot not running"}
-
-        bot_state["tick_count"] += 1
-
-        ok = await fetch_real_market_data()
-        if not ok:
-            return {
-                "ok": False,
-                "message": bot_state["last_error"] or "Market data fetch failed",
-            }
-
-        closed_trades = manage_open_trades()
-
-        ranked = []
-        for symbol in SYMBOLS:
-            data = market_state[symbol]
-            if data["price"] <= 0:
-                continue
-
-            side = "flat"
-            if data["score"] >= 0.58:
-                side = "long" if data["change_24h"] >= 0 else "short"
-
-            ranked.append(
-                {
-                    "symbol": symbol,
-                    "price": data["price"],
-                    "change_24h": data["change_24h"],
-                    "volume": data["volume"],
-                    "score": data["score"],
-                    "side": side,
-                }
-            )
-
-        ranked.sort(key=lambda x: x["score"], reverse=True)
-
-        new_signals = []
-        opened_trade = None
-
-        for candidate in ranked:
-            if candidate["side"] == "flat":
-                continue
-            if get_open_positions_count() >= bot_state["max_open_positions"]:
-                break
-            if has_open_trade_for_symbol(candidate["symbol"]):
-                continue
-
-            signal = {
-                "symbol": candidate["symbol"],
-                "side": candidate["side"],
-                "score": candidate["score"],
-                "price": candidate["price"],
-                "change_24h": candidate["change_24h"],
-                "volume": candidate["volume"],
-                "reason": "real price momentum + volume ranking",
-                "created_at": int(time.time()),
-            }
-            signals.insert(0, signal)
-            new_signals.append(signal)
-
-            if candidate["score"] >= 0.58:
-                opened_trade = create_trade(candidate)
-                trades.insert(0, opened_trade)
-                break
-
-        return {
-            "ok": True,
-            "tick_count": bot_state["tick_count"],
-            "ranked": ranked,
-            "new_signals": new_signals,
-            "opened_trade": opened_trade,
-            "closed_trades": closed_trades,
-            "equity_usd": bot_state["equity_usd"],
-            "stats": get_stats(),
-        }
-
+        return await run_tick_cycle()
     except Exception as e:
         bot_state["last_error"] = f"tick_bot error: {str(e)}"
+        print(bot_state["last_error"])
+        return {"ok": False, "message": bot_state["last_error"]}
+
+
+@app.post("/api/v1/bot/auto-pulse")
+async def auto_pulse():
+    try:
+        if not bot_state["running"] or not bot_state["auto_enabled"]:
+            return {
+                "ok": True,
+                "executed": False,
+                "message": "Auto mode inactive",
+                "tick_count": bot_state["tick_count"],
+            }
+
+        now = time.time()
+        wait_s = bot_state["auto_interval_seconds"]
+
+        if bot_state["last_auto_tick_ts"] and (now - bot_state["last_auto_tick_ts"]) < wait_s:
+            return {
+                "ok": True,
+                "executed": False,
+                "message": "Waiting next interval",
+                "tick_count": bot_state["tick_count"],
+            }
+
+        result = await run_tick_cycle()
+        if result.get("ok"):
+            bot_state["last_auto_tick_ts"] = now
+            result["executed"] = True
+        else:
+            result["executed"] = False
+
+        return result
+
+    except Exception as e:
+        bot_state["last_error"] = f"auto_pulse error: {str(e)}"
         print(bot_state["last_error"])
         return {"ok": False, "message": bot_state["last_error"]}

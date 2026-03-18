@@ -69,6 +69,7 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [error, setError] = useState("");
+  const [autoInterval, setAutoInterval] = useState(30);
 
   async function refreshAll() {
     setLoading(true);
@@ -121,6 +122,10 @@ export default function Home() {
       setStats(statsData || null);
       setLastUpdated(new Date());
 
+      if (configData?.auto_interval_seconds) {
+        setAutoInterval(configData.auto_interval_seconds);
+      }
+
       if (stateData?.last_error) {
         setError(stateData.last_error);
       } else {
@@ -134,8 +139,12 @@ export default function Home() {
     }
   }
 
-  async function callPost(url, fallbackMessage) {
-    const res = await fetch(url, { method: "POST" });
+  async function callPost(url, fallbackMessage, body = null) {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: body ? { "Content-Type": "application/json" } : undefined,
+      body: body ? JSON.stringify(body) : undefined,
+    });
     const data = await res.json();
 
     if (!res.ok || data?.ok === false) {
@@ -200,6 +209,52 @@ export default function Home() {
     }
   }
 
+  async function autoStart() {
+    setError("");
+    try {
+      await callPost(`${API_BASE}/api/v1/bot/auto-start`, "Impossible d'activer l'auto mode.");
+      await refreshAll();
+    } catch (err) {
+      console.error(err);
+      setError(err.message || "Impossible d'activer l'auto mode.");
+    }
+  }
+
+  async function autoStop() {
+    setError("");
+    try {
+      await callPost(`${API_BASE}/api/v1/bot/auto-stop`, "Impossible de désactiver l'auto mode.");
+      await refreshAll();
+    } catch (err) {
+      console.error(err);
+      setError(err.message || "Impossible de désactiver l'auto mode.");
+    }
+  }
+
+  async function saveInterval() {
+    setError("");
+    try {
+      await callPost(
+        `${API_BASE}/api/v1/bot/set-interval`,
+        "Impossible de changer l'intervalle.",
+        { seconds: Number(autoInterval) }
+      );
+      await refreshAll();
+    } catch (err) {
+      console.error(err);
+      setError(err.message || "Impossible de changer l'intervalle.");
+    }
+  }
+
+  async function autoPulse() {
+    try {
+      await fetch(`${API_BASE}/api/v1/bot/auto-pulse`, { method: "POST" });
+      await refreshAll();
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
   useEffect(() => {
     refreshAll();
   }, []);
@@ -212,9 +267,24 @@ export default function Home() {
     return () => clearInterval(interval);
   }, []);
 
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (state?.running && state?.auto_enabled) {
+        autoPulse();
+      }
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [state?.running, state?.auto_enabled]);
+
   const botStatus = useMemo(() => {
     if (!state) return "inconnu";
     return state.running ? "en marche" : "arrêté";
+  }, [state]);
+
+  const autoStatus = useMemo(() => {
+    if (!state) return "off";
+    return state.auto_enabled ? "AUTO ON" : "AUTO OFF";
   }, [state]);
 
   const lastUpdatedText = lastUpdated
@@ -231,9 +301,9 @@ export default function Home() {
         fontFamily: "Arial, sans-serif",
       }}
     >
-      <h1 style={{ marginBottom: 8 }}>MEXC AI Trading Bot v6 Pro</h1>
+      <h1 style={{ marginBottom: 8 }}>MEXC AI Trading Bot v7 Auto Pilot</h1>
       <p style={{ marginTop: 0 }}>
-        Dashboard paper trading plus clair, plus visuel et plus pratique.
+        Tick manuel + mode automatique périodique en paper trading.
       </p>
 
       <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
@@ -243,31 +313,54 @@ export default function Home() {
         <button onClick={refreshAll}>Rafraîchir</button>
         <button onClick={forceMarketRefresh}>Forcer refresh marché</button>
         <button onClick={resetPaperAccount}>Reset paper account</button>
+        <button onClick={autoStart}>Auto ON</button>
+        <button onClick={autoStop}>Auto OFF</button>
       </div>
 
-      <div
-        style={{
-          marginBottom: 20,
-          padding: 12,
-          borderRadius: 12,
-          background: "#0d1f44",
-          display: "flex",
-          gap: 20,
-          flexWrap: "wrap",
-          alignItems: "center",
-        }}
-      >
-        <div>
-          <strong>Statut du bot:</strong>{" "}
-          <span style={{ color: state?.running ? "#5df28c" : "#ff9b9b", fontWeight: "bold" }}>
-            {botStatus}
-          </span>
+      <div style={{ ...cardStyle(), marginBottom: 20 }}>
+        <div style={{ display: "flex", gap: 20, flexWrap: "wrap", alignItems: "center" }}>
+          <div>
+            <strong>Statut du bot:</strong>{" "}
+            <span style={{ color: state?.running ? "#5df28c" : "#ff9b9b", fontWeight: "bold" }}>
+              {botStatus}
+            </span>
+          </div>
+
+          <div>
+            <strong>Mode auto:</strong>{" "}
+            <span
+              style={{
+                color: state?.auto_enabled ? "#5df28c" : "#ff9b9b",
+                fontWeight: "bold",
+              }}
+            >
+              {autoStatus}
+            </span>
+          </div>
+
+          <div><strong>Dernière mise à jour:</strong> {lastUpdatedText}</div>
+          <div><strong>Chargement:</strong> {loading ? "oui" : "non"}</div>
+          <div><strong>Ticks:</strong> {state?.tick_count ?? 0}</div>
+          <div><strong>Positions ouvertes:</strong> {state?.open_positions ?? 0}</div>
         </div>
 
-        <div><strong>Dernière mise à jour:</strong> {lastUpdatedText}</div>
-        <div><strong>Chargement:</strong> {loading ? "oui" : "non"}</div>
-        <div><strong>Ticks:</strong> {state?.tick_count ?? 0}</div>
-        <div><strong>Positions ouvertes:</strong> {state?.open_positions ?? 0}</div>
+        <div style={{ marginTop: 16, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+          <label>
+            <strong>Intervalle auto (sec): </strong>
+            <input
+              type="number"
+              min="10"
+              max="300"
+              value={autoInterval}
+              onChange={(e) => setAutoInterval(e.target.value)}
+              style={{ marginLeft: 8, padding: 6, borderRadius: 8, width: 90 }}
+            />
+          </label>
+          <button onClick={saveInterval}>Enregistrer intervalle</button>
+          <div>
+            <strong>Intervalle actuel:</strong> {state?.auto_interval_seconds ?? "-"} sec
+          </div>
+        </div>
       </div>
 
       {stats && (

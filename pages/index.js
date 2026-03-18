@@ -20,6 +20,9 @@ function badgeStyle(type) {
   if (type === "loss") return { ...base, background: "#4a1626", color: "#ff9b9b" };
   if (type === "yes") return { ...base, background: "#4a1626", color: "#ffb3b3" };
   if (type === "no") return { ...base, background: "#123d26", color: "#5df28c" };
+  if (type === "bullish") return { ...base, background: "#123d26", color: "#5df28c" };
+  if (type === "bearish") return { ...base, background: "#4a1626", color: "#ff9b9b" };
+  if (type === "neutral") return { ...base, background: "#3b3b3b", color: "#d6d6d6" };
 
   return { ...base, background: "#2c2c2c", color: "#fff" };
 }
@@ -159,7 +162,6 @@ export default function Home() {
     if (!res.ok || data?.ok === false) {
       throw new Error(data?.message || fallbackMessage);
     }
-
     return data;
   }
 
@@ -299,6 +301,7 @@ export default function Home() {
   }, [state]);
 
   const cooldownMap = state?.cooldowns || {};
+  const marketRegime = state?.market_regime || {};
 
   return (
     <main
@@ -310,9 +313,9 @@ export default function Home() {
         fontFamily: "Arial, sans-serif",
       }}
     >
-      <h1 style={{ marginBottom: 8 }}>MEXC AI Trading Bot v9 Risk Manager</h1>
+      <h1 style={{ marginBottom: 8 }}>MEXC AI Trading Bot v10 Smart Risk</h1>
       <p style={{ marginTop: 0 }}>
-        Journal de trades amélioré, gestion du risque plus claire, suivi des positions plus utile.
+        Break-even, trailing stop, filtre marché global et journal enrichi.
       </p>
 
       <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
@@ -334,14 +337,12 @@ export default function Home() {
               {botStatus}
             </span>
           </div>
-
           <div>
             <strong>Mode auto:</strong>{" "}
             <span style={{ color: state?.auto_enabled ? "#5df28c" : "#ff9b9b", fontWeight: "bold" }}>
               {autoStatus}
             </span>
           </div>
-
           <div><strong>Dernière mise à jour:</strong> {lastUpdatedText}</div>
           <div><strong>Chargement:</strong> {loading ? "oui" : "non"}</div>
           <div><strong>Ticks:</strong> {state?.tick_count ?? 0}</div>
@@ -362,6 +363,8 @@ export default function Home() {
           </label>
           <button onClick={saveInterval}>Enregistrer intervalle</button>
           <div><strong>Intervalle actuel:</strong> {state?.auto_interval_seconds ?? "-"} sec</div>
+          <div><strong>Régime:</strong> <span style={badgeStyle(marketRegime.regime)}>{String(marketRegime.regime || "neutral").toUpperCase()}</span></div>
+          <div><strong>Nouveaux trades autorisés:</strong> <span style={badgeStyle(marketRegime.allow_new_trades ? "no" : "yes")}>{marketRegime.allow_new_trades ? "OUI" : "NON"}</span></div>
         </div>
       </div>
 
@@ -466,12 +469,15 @@ export default function Home() {
                 <th style={thtd()}>TP</th>
                 <th style={thtd()}>Prix actuel</th>
                 <th style={thtd()}>PnL flottant</th>
+                <th style={thtd()}>R</th>
+                <th style={thtd()}>BE</th>
+                <th style={thtd()}>Trail</th>
                 <th style={thtd()}>Durée</th>
               </tr>
             </thead>
             <tbody>
               {openTrades.length === 0 ? (
-                <tr><td style={thtd()} colSpan={8}>Aucune position ouverte</td></tr>
+                <tr><td style={thtd()} colSpan={11}>Aucune position ouverte</td></tr>
               ) : (
                 openTrades.map((t) => (
                   <tr key={t.id}>
@@ -482,6 +488,9 @@ export default function Home() {
                     <td style={thtd()}>{t.take_profit}</td>
                     <td style={thtd()}>{t.current_price}</td>
                     <td style={{ ...thtd(), color: pnlColor(t.unrealized_pnl_usd) }}>{fmtNum(t.unrealized_pnl_usd)}</td>
+                    <td style={{ ...thtd(), color: pnlColor(t.r_multiple) }}>{fmtNum(t.r_multiple)}</td>
+                    <td style={thtd()}><span style={badgeStyle(t.moved_to_break_even ? "no" : "yes")}>{t.moved_to_break_even ? "OUI" : "NON"}</span></td>
+                    <td style={thtd()}><span style={badgeStyle(t.trailing_active ? "no" : "yes")}>{t.trailing_active ? "OUI" : "NON"}</span></td>
                     <td style={thtd()}>{t.duration_text || "-"}</td>
                   </tr>
                 ))

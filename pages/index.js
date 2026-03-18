@@ -25,8 +25,9 @@ function badgeStyle(type) {
 }
 
 function pnlColor(value) {
-  if (value > 0) return "#5df28c";
-  if (value < 0) return "#ff9b9b";
+  const n = Number(value || 0);
+  if (n > 0) return "#5df28c";
+  if (n < 0) return "#ff9b9b";
   return "#ffffff";
 }
 
@@ -59,6 +60,11 @@ function thtd() {
     borderBottom: "1px solid rgba(255,255,255,0.08)",
     verticalAlign: "top",
   };
+}
+
+function fmtNum(v, digits = 4) {
+  const n = Number(v ?? 0);
+  return n.toFixed(digits);
 }
 
 export default function Home() {
@@ -304,9 +310,9 @@ export default function Home() {
         fontFamily: "Arial, sans-serif",
       }}
     >
-      <h1 style={{ marginBottom: 8 }}>MEXC AI Trading Bot v8.2 Clean</h1>
+      <h1 style={{ marginBottom: 8 }}>MEXC AI Trading Bot v9 Risk Manager</h1>
       <p style={{ marginTop: 0 }}>
-        Marché nettoyé, signaux plus lisibles, positions et trades plus clairs.
+        Journal de trades amélioré, gestion du risque plus claire, suivi des positions plus utile.
       </p>
 
       <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
@@ -456,23 +462,27 @@ export default function Home() {
                 <th style={thtd()}>Symbole</th>
                 <th style={thtd()}>Side</th>
                 <th style={thtd()}>Entrée</th>
+                <th style={thtd()}>SL</th>
+                <th style={thtd()}>TP</th>
                 <th style={thtd()}>Prix actuel</th>
                 <th style={thtd()}>PnL flottant</th>
-                <th style={thtd()}>Qualité</th>
+                <th style={thtd()}>Durée</th>
               </tr>
             </thead>
             <tbody>
               {openTrades.length === 0 ? (
-                <tr><td style={thtd()} colSpan={6}>Aucune position ouverte</td></tr>
+                <tr><td style={thtd()} colSpan={8}>Aucune position ouverte</td></tr>
               ) : (
                 openTrades.map((t) => (
                   <tr key={t.id}>
                     <td style={thtd()}>{t.symbol}</td>
                     <td style={thtd()}><span style={badgeStyle(t.side)}>{t.side.toUpperCase()}</span></td>
                     <td style={thtd()}>{t.entry}</td>
+                    <td style={thtd()}>{t.stop_loss}</td>
+                    <td style={thtd()}>{t.take_profit}</td>
                     <td style={thtd()}>{t.current_price}</td>
-                    <td style={{ ...thtd(), color: pnlColor(t.unrealized_pnl_usd) }}>{t.unrealized_pnl_usd}</td>
-                    <td style={thtd()}><span style={badgeStyle(t.quality)}>{String(t.quality || "").toUpperCase()}</span></td>
+                    <td style={{ ...thtd(), color: pnlColor(t.unrealized_pnl_usd) }}>{fmtNum(t.unrealized_pnl_usd)}</td>
+                    <td style={thtd()}>{t.duration_text || "-"}</td>
                   </tr>
                 ))
               )}
@@ -490,11 +500,12 @@ export default function Home() {
                 <th style={thtd()}>Résultat</th>
                 <th style={thtd()}>Raison</th>
                 <th style={thtd()}>PnL</th>
+                <th style={thtd()}>Durée</th>
               </tr>
             </thead>
             <tbody>
               {closedTrades.length === 0 ? (
-                <tr><td style={thtd()} colSpan={5}>Aucun trade fermé</td></tr>
+                <tr><td style={thtd()} colSpan={6}>Aucun trade fermé</td></tr>
               ) : (
                 closedTrades.map((t) => (
                   <tr key={t.id}>
@@ -502,7 +513,8 @@ export default function Home() {
                     <td style={thtd()}><span style={badgeStyle(t.side)}>{t.side.toUpperCase()}</span></td>
                     <td style={thtd()}><span style={badgeStyle(t.result)}>{String(t.result || "").toUpperCase()}</span></td>
                     <td style={thtd()}>{t.close_reason || "-"}</td>
-                    <td style={{ ...thtd(), color: pnlColor(t.pnl_usd) }}>{t.pnl_usd}</td>
+                    <td style={{ ...thtd(), color: pnlColor(t.pnl_usd) }}>{fmtNum(t.pnl_usd)}</td>
+                    <td style={thtd()}>{t.duration_text || "-"}</td>
                   </tr>
                 ))
               )}

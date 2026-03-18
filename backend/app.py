@@ -4,7 +4,7 @@ import time
 from typing import Dict, List
 import httpx
 
-app = FastAPI(title="MEXC AI Bot Backend v8.1 Top20")
+app = FastAPI(title="MEXC AI Bot Backend v8.1 Top20 Fixed")
 
 app.add_middleware(
     CORSMiddleware,
@@ -17,7 +17,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-SYMBOLS = [
+DESIRED_SYMBOLS = [
     "BTC/USDT",
     "ETH/USDT",
     "SOL/USDT",
@@ -40,28 +40,8 @@ SYMBOLS = [
     "NEAR/USDT",
 ]
 
-KRAKEN_PAIRS = {
-    "BTC/USDT": "XBTUSDT",
-    "ETH/USDT": "ETHUSDT",
-    "SOL/USDT": "SOLUSDT",
-    "XRP/USDT": "XRPUSDT",
-    "ADA/USDT": "ADAUSDT",
-    "DOGE/USDT": "DOGEUSDT",
-    "TRX/USDT": "TRXUSDT",
-    "AVAX/USDT": "AVAXUSDT",
-    "LINK/USDT": "LINKUSDT",
-    "DOT/USDT": "DOTUSDT",
-    "TON/USDT": "TONUSDT",
-    "SHIB/USDT": "SHIBUSDT",
-    "LTC/USDT": "LTCUSDT",
-    "BCH/USDT": "BCHUSDT",
-    "UNI/USDT": "UNIUSDT",
-    "ATOM/USDT": "ATOMUSDT",
-    "XLM/USDT": "XLMUSDT",
-    "ETC/USDT": "ETCUSDT",
-    "APT/USDT": "APTUSDT",
-    "NEAR/USDT": "NEARUSDT",
-}
+SYMBOLS = list(DESIRED_SYMBOLS)
+KRAKEN_PAIRS: Dict[str, str] = {}
 
 INITIAL_EQUITY = 1000.0
 MARKET_CACHE_SECONDS = 30
@@ -101,6 +81,50 @@ symbol_cooldowns: Dict[str, int] = {s: 0 for s in SYMBOLS}
 last_market_fetch_ts = 0.0
 
 
+async def refresh_valid_kraken_pairs() -> bool:
+    global KRAKEN_PAIRS
+
+    try:
+        url = "https://api.kraken.com/0/public/AssetPairs"
+
+        async with httpx.AsyncClient(timeout=25.0) as client:
+            response = await client.get(
+                url,
+                headers={"accept": "application/json", "user-agent": "cryptoia-bot/1.0"},
+            )
+            response.raise_for_status()
+            payload = response.json()
+
+        if payload.get("error"):
+            raise Exception(f"Kraken AssetPairs error: {payload['error']}")
+
+        result = payload.get("result", {})
+        discovered = {}
+
+        for _pair_key, item in result.items():
+            altname = str(item.get("altname", ""))
+            wsname = str(item.get("wsname", ""))
+
+            candidate = None
+
+            if wsname.endswith("/USDT"):
+                candidate = wsname
+            elif altname.endswith("USDT"):
+                base = altname[:-4]
+                candidate = f"{base}/USDT"
+
+            if candidate and candidate in DESIRED_SYMBOLS:
+                discovered[candidate] = altname
+
+        KRAKEN_PAIRS = discovered
+        return True
+
+    except Exception as e:
+        bot_state["last_error"] = f"refresh_valid_kraken_pairs error: {str(e)}"
+        print(bot_state["last_error"])
+        return False
+
+
 async def fetch_real_market_data(force: bool = False) -> bool:
     global last_market_fetch_ts
 
@@ -109,6 +133,14 @@ async def fetch_real_market_data(force: bool = False) -> bool:
         return True
 
     try:
+        if not KRAKEN_PAIRS:
+            ok_pairs = await refresh_valid_kraken_pairs()
+            if not ok_pairs:
+                return False
+
+        if not KRAKEN_PAIRS:
+            raise Exception("No valid Kraken USDT pairs found for the selected symbols")
+
         pair_list = ",".join(KRAKEN_PAIRS.values())
         url = "https://api.kraken.com/0/public/Ticker"
 
@@ -125,6 +157,16 @@ async def fetch_real_market_data(force: bool = False) -> bool:
             raise Exception(f"Kraken error: {payload['error']}")
 
         result = payload.get("result", {})
+
+        for s in DESIRED_SYMBOLS:
+            market_state[s] = {
+                "price": 0.0,
+                "change_24h": 0.0,
+                "volume": 0.0,
+                "score": 0.0,
+                "trend_strength": 0.0,
+                "quality": "low",
+            }
 
         for symbol, kraken_pair in KRAKEN_PAIRS.items():
             item = result.get(kraken_pair)
@@ -443,6 +485,7 @@ def get_config():
         "symbols": bot_state["symbols"],
         "auto_enabled": bot_state["auto_enabled"],
         "auto_interval_seconds": bot_state["auto_interval_seconds"],
+        "valid_kraken_pairs": KRAKEN_PAIRS,
     }
 
 
@@ -460,6 +503,7 @@ def get_state():
         "last_error": bot_state["last_error"],
         "market": market_state,
         "cooldowns": symbol_cooldowns,
+        "valid_kraken_pairs": KRAKEN_PAIRS,
     }
 
 
@@ -490,10 +534,15 @@ def api_stats():
 
 @app.post("/api/v1/market/refresh")
 async def api_market_refresh():
+    ok = await refresh_valid_kraken_pairs()
+    if not ok:
+        return {"ok": False, "message": bot_state["last_error"]}
+
     ok = await fetch_real_market_data(force=True)
     if not ok:
         return {"ok": False, "message": bot_state["last_error"]}
-    return {"ok": True, "market": market_state}
+
+    return {"ok": True, "market": market_state, "valid_kraken_pairs": KRAKEN_PAIRS}
 
 
 @app.post("/api/v1/bot/reset")

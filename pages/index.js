@@ -18,6 +18,8 @@ function badgeStyle(type) {
   if (type === "low") return { ...base, background: "#3b3b3b", color: "#d6d6d6" };
   if (type === "win") return { ...base, background: "#123d26", color: "#5df28c" };
   if (type === "loss") return { ...base, background: "#4a1626", color: "#ff9b9b" };
+  if (type === "yes") return { ...base, background: "#4a1626", color: "#ffb3b3" };
+  if (type === "no") return { ...base, background: "#123d26", color: "#5df28c" };
 
   return { ...base, background: "#2c2c2c", color: "#fff" };
 }
@@ -156,8 +158,8 @@ export default function Home() {
   }
 
   async function startBot() {
-    setError("");
     try {
+      setError("");
       await callPost(`${API_BASE}/api/v1/bot/start`, "Impossible de démarrer le bot.");
       await refreshAll();
     } catch (err) {
@@ -166,8 +168,8 @@ export default function Home() {
   }
 
   async function stopBot() {
-    setError("");
     try {
+      setError("");
       await callPost(`${API_BASE}/api/v1/bot/stop`, "Impossible d'arrêter le bot.");
       await refreshAll();
     } catch (err) {
@@ -176,8 +178,8 @@ export default function Home() {
   }
 
   async function tickBot() {
-    setError("");
     try {
+      setError("");
       await callPost(`${API_BASE}/api/v1/bot/tick`, "Impossible de lancer un tick.");
       await refreshAll();
     } catch (err) {
@@ -186,8 +188,8 @@ export default function Home() {
   }
 
   async function forceMarketRefresh() {
-    setError("");
     try {
+      setError("");
       await callPost(`${API_BASE}/api/v1/market/refresh`, "Impossible de forcer le refresh marché.");
       await refreshAll();
     } catch (err) {
@@ -196,8 +198,8 @@ export default function Home() {
   }
 
   async function resetPaperAccount() {
-    setError("");
     try {
+      setError("");
       await callPost(`${API_BASE}/api/v1/bot/reset`, "Impossible de reset le paper account.");
       await refreshAll();
     } catch (err) {
@@ -206,8 +208,8 @@ export default function Home() {
   }
 
   async function autoStart() {
-    setError("");
     try {
+      setError("");
       await callPost(`${API_BASE}/api/v1/bot/auto-start`, "Impossible d'activer l'auto mode.");
       await refreshAll();
     } catch (err) {
@@ -216,8 +218,8 @@ export default function Home() {
   }
 
   async function autoStop() {
-    setError("");
     try {
+      setError("");
       await callPost(`${API_BASE}/api/v1/bot/auto-stop`, "Impossible de désactiver l'auto mode.");
       await refreshAll();
     } catch (err) {
@@ -226,8 +228,8 @@ export default function Home() {
   }
 
   async function saveInterval() {
-    setError("");
     try {
+      setError("");
       await callPost(
         `${API_BASE}/api/v1/bot/set-interval`,
         "Impossible de changer l'intervalle.",
@@ -256,7 +258,6 @@ export default function Home() {
     const interval = setInterval(() => {
       refreshAll();
     }, 15000);
-
     return () => clearInterval(interval);
   }, []);
 
@@ -266,7 +267,6 @@ export default function Home() {
         autoPulse();
       }
     }, 5000);
-
     return () => clearInterval(interval);
   }, [state?.running, state?.auto_enabled]);
 
@@ -284,7 +284,15 @@ export default function Home() {
     ? lastUpdated.toLocaleTimeString("fr-CA")
     : "jamais";
 
-  const marketRows = state?.market ? Object.entries(state.market) : [];
+  const marketRows = useMemo(() => {
+    if (!state?.market) return [];
+    return Object.entries(state.market)
+      .map(([symbol, data]) => ({ symbol, ...data }))
+      .filter((row) => Number(row.price) > 0)
+      .sort((a, b) => Number(b.score || 0) - Number(a.score || 0));
+  }, [state]);
+
+  const cooldownMap = state?.cooldowns || {};
 
   return (
     <main
@@ -296,9 +304,9 @@ export default function Home() {
         fontFamily: "Arial, sans-serif",
       }}
     >
-      <h1 style={{ marginBottom: 8 }}>MEXC AI Trading Bot v8 Smart Engine</h1>
+      <h1 style={{ marginBottom: 8 }}>MEXC AI Trading Bot v8.2 Clean</h1>
       <p style={{ marginTop: 0 }}>
-        Moteur plus intelligent + interface plus professionnelle.
+        Marché nettoyé, signaux plus lisibles, positions et trades plus clairs.
       </p>
 
       <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
@@ -393,9 +401,9 @@ export default function Home() {
         </div>
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: 16, marginBottom: 16 }}>
         <section style={cardStyle()}>
-          <h2>Marché</h2>
+          <h2>Marché valide</h2>
           <table style={tableStyle()}>
             <thead>
               <tr>
@@ -405,22 +413,27 @@ export default function Home() {
                 <th style={thtd()}>Volume</th>
                 <th style={thtd()}>Score</th>
                 <th style={thtd()}>Qualité</th>
+                <th style={thtd()}>Cooldown</th>
               </tr>
             </thead>
             <tbody>
               {marketRows.length === 0 ? (
-                <tr><td style={thtd()} colSpan={6}>Aucune donnée marché</td></tr>
+                <tr><td style={thtd()} colSpan={7}>Aucune donnée marché valide</td></tr>
               ) : (
-                marketRows.map(([symbol, data]) => (
-                  <tr key={symbol}>
-                    <td style={thtd()}>{symbol}</td>
-                    <td style={thtd()}>{data.price}</td>
-                    <td style={{ ...thtd(), color: pnlColor(data.change_24h) }}>{data.change_24h}</td>
-                    <td style={thtd()}>{data.volume}</td>
-                    <td style={thtd()}>{data.score}</td>
-                    <td style={thtd()}><span style={badgeStyle(data.quality)}>{String(data.quality || "").toUpperCase()}</span></td>
-                  </tr>
-                ))
+                marketRows.map((row) => {
+                  const onCooldown = cooldownMap[row.symbol] && Date.now() / 1000 < cooldownMap[row.symbol];
+                  return (
+                    <tr key={row.symbol}>
+                      <td style={thtd()}>{row.symbol}</td>
+                      <td style={thtd()}>{row.price}</td>
+                      <td style={{ ...thtd(), color: pnlColor(row.change_24h) }}>{row.change_24h}</td>
+                      <td style={thtd()}>{row.volume}</td>
+                      <td style={thtd()}>{row.score}</td>
+                      <td style={thtd()}><span style={badgeStyle(row.quality)}>{String(row.quality || "").toUpperCase()}</span></td>
+                      <td style={thtd()}><span style={badgeStyle(onCooldown ? "yes" : "no")}>{onCooldown ? "OUI" : "NON"}</span></td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -428,7 +441,9 @@ export default function Home() {
 
         <section style={cardStyle()}>
           <h2>État</h2>
-          <pre style={{ whiteSpace: "pre-wrap" }}>{JSON.stringify(state, null, 2)}</pre>
+          <pre style={{ whiteSpace: "pre-wrap", maxHeight: 420, overflow: "auto" }}>
+            {JSON.stringify(state, null, 2)}
+          </pre>
         </section>
       </div>
 
@@ -496,7 +511,7 @@ export default function Home() {
         </section>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: 16 }}>
         <section style={cardStyle()}>
           <h2>Signaux</h2>
           <table style={tableStyle()}>
@@ -507,12 +522,13 @@ export default function Home() {
                 <th style={thtd()}>24h %</th>
                 <th style={thtd()}>Score</th>
                 <th style={thtd()}>Qualité</th>
+                <th style={thtd()}>Raison</th>
                 <th style={thtd()}>Créé</th>
               </tr>
             </thead>
             <tbody>
               {signals.length === 0 ? (
-                <tr><td style={thtd()} colSpan={6}>Aucun signal</td></tr>
+                <tr><td style={thtd()} colSpan={7}>Aucun signal</td></tr>
               ) : (
                 signals.map((s, i) => (
                   <tr key={`${s.symbol}-${s.created_at}-${i}`}>
@@ -521,6 +537,7 @@ export default function Home() {
                     <td style={{ ...thtd(), color: pnlColor(s.change_24h) }}>{s.change_24h}</td>
                     <td style={thtd()}>{s.score}</td>
                     <td style={thtd()}><span style={badgeStyle(s.quality)}>{String(s.quality || "").toUpperCase()}</span></td>
+                    <td style={thtd()}>{s.reason || "-"}</td>
                     <td style={thtd()}>{formatTs(s.created_at)}</td>
                   </tr>
                 ))
@@ -531,7 +548,9 @@ export default function Home() {
 
         <section style={cardStyle()}>
           <h2>Configuration</h2>
-          <pre style={{ whiteSpace: "pre-wrap" }}>{JSON.stringify(config, null, 2)}</pre>
+          <pre style={{ whiteSpace: "pre-wrap", maxHeight: 420, overflow: "auto" }}>
+            {JSON.stringify(config, null, 2)}
+          </pre>
         </section>
       </div>
     </main>

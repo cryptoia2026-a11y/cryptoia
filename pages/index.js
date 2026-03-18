@@ -4,33 +4,38 @@ const API_BASE = "https://cryptoia-api.onrender.com";
 
 function badgeStyle(type) {
   const base = {
-    display: "inline-block",
-    padding: "4px 10px",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "6px 12px",
     borderRadius: "999px",
     fontSize: 12,
-    fontWeight: "bold",
+    fontWeight: 800,
+    letterSpacing: "0.3px",
+    minWidth: 56,
+    border: "1px solid rgba(255,255,255,0.08)",
   };
 
-  if (type === "long") return { ...base, background: "#123d26", color: "#5df28c" };
-  if (type === "short") return { ...base, background: "#4a1626", color: "#ff9b9b" };
-  if (type === "high") return { ...base, background: "#123d26", color: "#5df28c" };
-  if (type === "medium") return { ...base, background: "#3e3612", color: "#ffd76a" };
-  if (type === "low") return { ...base, background: "#3b3b3b", color: "#d6d6d6" };
-  if (type === "win") return { ...base, background: "#123d26", color: "#5df28c" };
-  if (type === "loss") return { ...base, background: "#4a1626", color: "#ff9b9b" };
-  if (type === "yes") return { ...base, background: "#4a1626", color: "#ffb3b3" };
-  if (type === "no") return { ...base, background: "#123d26", color: "#5df28c" };
-  if (type === "bullish") return { ...base, background: "#123d26", color: "#5df28c" };
-  if (type === "bearish") return { ...base, background: "#4a1626", color: "#ff9b9b" };
-  if (type === "neutral") return { ...base, background: "#3b3b3b", color: "#d6d6d6" };
+  if (type === "long") return { ...base, background: "rgba(34,197,94,0.18)", color: "#86efac" };
+  if (type === "short") return { ...base, background: "rgba(239,68,68,0.18)", color: "#fca5a5" };
+  if (type === "high") return { ...base, background: "rgba(34,197,94,0.18)", color: "#86efac" };
+  if (type === "medium") return { ...base, background: "rgba(245,158,11,0.18)", color: "#fcd34d" };
+  if (type === "low") return { ...base, background: "rgba(148,163,184,0.18)", color: "#cbd5e1" };
+  if (type === "win") return { ...base, background: "rgba(34,197,94,0.18)", color: "#86efac" };
+  if (type === "loss") return { ...base, background: "rgba(239,68,68,0.18)", color: "#fca5a5" };
+  if (type === "yes") return { ...base, background: "rgba(34,197,94,0.18)", color: "#86efac" };
+  if (type === "no") return { ...base, background: "rgba(239,68,68,0.18)", color: "#fca5a5" };
+  if (type === "bullish") return { ...base, background: "rgba(34,197,94,0.18)", color: "#86efac" };
+  if (type === "bearish") return { ...base, background: "rgba(239,68,68,0.18)", color: "#fca5a5" };
+  if (type === "neutral") return { ...base, background: "rgba(148,163,184,0.18)", color: "#cbd5e1" };
 
-  return { ...base, background: "#2c2c2c", color: "#fff" };
+  return { ...base, background: "rgba(255,255,255,0.08)", color: "#fff" };
 }
 
 function pnlColor(value) {
   const n = Number(value || 0);
-  if (n > 0) return "#5df28c";
-  if (n < 0) return "#ff9b9b";
+  if (n > 0) return "#4ade80";
+  if (n < 0) return "#f87171";
   return "#ffffff";
 }
 
@@ -39,12 +44,30 @@ function formatTs(ts) {
   return new Date(ts * 1000).toLocaleString("fr-CA");
 }
 
-function cardStyle() {
+function fmtNum(v, digits = 4) {
+  const n = Number(v ?? 0);
+  return n.toFixed(digits);
+}
+
+function surfaceStyle() {
   return {
-    background: "#0d1f44",
-    padding: 20,
-    borderRadius: 16,
-    boxShadow: "0 8px 24px rgba(0,0,0,0.2)",
+    background: "linear-gradient(180deg, rgba(13,31,68,0.95) 0%, rgba(10,24,54,0.98) 100%)",
+    border: "1px solid rgba(255,255,255,0.06)",
+    borderRadius: 22,
+    padding: 22,
+    boxShadow: "0 12px 32px rgba(0,0,0,0.28)",
+    backdropFilter: "blur(8px)",
+  };
+}
+
+function statCardStyle() {
+  return {
+    background: "linear-gradient(180deg, rgba(16,37,80,0.95) 0%, rgba(10,24,54,0.98) 100%)",
+    border: "1px solid rgba(255,255,255,0.06)",
+    borderRadius: 20,
+    padding: 22,
+    boxShadow: "0 12px 30px rgba(0,0,0,0.22)",
+    minHeight: 110,
   };
 }
 
@@ -56,25 +79,74 @@ function tableStyle() {
   };
 }
 
-function thtd() {
+function thStyle() {
   return {
     textAlign: "left",
-    padding: "10px 8px",
+    padding: "12px 10px",
     borderBottom: "1px solid rgba(255,255,255,0.08)",
+    color: "#cbd5e1",
+    fontSize: 13,
+    fontWeight: 800,
+    letterSpacing: "0.3px",
+    position: "sticky",
+    top: 0,
+    background: "rgba(13,31,68,0.98)",
+    zIndex: 1,
+  };
+}
+
+function tdStyle() {
+  return {
+    textAlign: "left",
+    padding: "12px 10px",
+    borderBottom: "1px solid rgba(255,255,255,0.06)",
     verticalAlign: "top",
   };
 }
 
-function fmtNum(v, digits = 4) {
-  const n = Number(v ?? 0);
-  return n.toFixed(digits);
+function buttonStyle(kind = "default") {
+  const common = {
+    borderRadius: 12,
+    padding: "10px 14px",
+    fontWeight: 800,
+    fontSize: 14,
+    border: "1px solid rgba(255,255,255,0.08)",
+    cursor: "pointer",
+    transition: "all 0.15s ease",
+    color: "#fff",
+  };
+
+  if (kind === "green") {
+    return {
+      ...common,
+      background: "linear-gradient(180deg, #16a34a 0%, #15803d 100%)",
+    };
+  }
+
+  if (kind === "red") {
+    return {
+      ...common,
+      background: "linear-gradient(180deg, #dc2626 0%, #991b1b 100%)",
+    };
+  }
+
+  if (kind === "gold") {
+    return {
+      ...common,
+      background: "linear-gradient(180deg, #d97706 0%, #92400e 100%)",
+    };
+  }
+
+  return {
+    ...common,
+    background: "linear-gradient(180deg, #1e3a8a 0%, #172554 100%)",
+  };
 }
 
 export default function Home() {
   const [config, setConfig] = useState(null);
   const [state, setState] = useState(null);
   const [signals, setSignals] = useState([]);
-  const [trades, setTrades] = useState([]);
   const [openTrades, setOpenTrades] = useState([]);
   const [closedTrades, setClosedTrades] = useState([]);
   const [stats, setStats] = useState(null);
@@ -91,7 +163,6 @@ export default function Home() {
         configRes,
         stateRes,
         signalsRes,
-        tradesRes,
         openTradesRes,
         closedTradesRes,
         statsRes,
@@ -99,7 +170,6 @@ export default function Home() {
         fetch(`${API_BASE}/api/v1/config`),
         fetch(`${API_BASE}/api/v1/state`),
         fetch(`${API_BASE}/api/v1/signals`),
-        fetch(`${API_BASE}/api/v1/trades`),
         fetch(`${API_BASE}/api/v1/open-trades`),
         fetch(`${API_BASE}/api/v1/closed-trades`),
         fetch(`${API_BASE}/api/v1/stats`),
@@ -109,7 +179,6 @@ export default function Home() {
         !configRes.ok ||
         !stateRes.ok ||
         !signalsRes.ok ||
-        !tradesRes.ok ||
         !openTradesRes.ok ||
         !closedTradesRes.ok ||
         !statsRes.ok
@@ -120,7 +189,6 @@ export default function Home() {
       const configData = await configRes.json();
       const stateData = await stateRes.json();
       const signalsData = await signalsRes.json();
-      const tradesData = await tradesRes.json();
       const openTradesData = await openTradesRes.json();
       const closedTradesData = await closedTradesRes.json();
       const statsData = await statsRes.json();
@@ -128,7 +196,6 @@ export default function Home() {
       setConfig(configData);
       setState(stateData);
       setSignals(signalsData.items || []);
-      setTrades(tradesData.items || []);
       setOpenTrades(openTradesData.items || []);
       setClosedTrades(closedTradesData.items || []);
       setStats(statsData || null);
@@ -303,276 +370,309 @@ export default function Home() {
   const cooldownMap = state?.cooldowns || {};
   const marketRegime = state?.market_regime || {};
 
+  const topSignals = signals.slice(0, 10);
+  const topClosedTrades = closedTrades.slice(0, 12);
+
   return (
     <main
       style={{
-        background: "#06142b",
         minHeight: "100vh",
         color: "white",
-        padding: 24,
-        fontFamily: "Arial, sans-serif",
+        padding: 26,
+        fontFamily: "Inter, Arial, sans-serif",
+        background:
+          "radial-gradient(circle at top left, rgba(30,64,175,0.22), transparent 28%), radial-gradient(circle at top right, rgba(8,145,178,0.16), transparent 25%), linear-gradient(180deg, #041021 0%, #06142b 45%, #07182f 100%)",
       }}
     >
-      <h1 style={{ marginBottom: 8 }}>MEXC AI Trading Bot v10 Smart Risk</h1>
-      <p style={{ marginTop: 0 }}>
-        Break-even, trailing stop, filtre marché global et journal enrichi.
-      </p>
-
-      <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
-        <button onClick={startBot}>Démarrer</button>
-        <button onClick={stopBot}>Arrêter</button>
-        <button onClick={tickBot}>Lancer un tick</button>
-        <button onClick={refreshAll}>Rafraîchir</button>
-        <button onClick={forceMarketRefresh}>Forcer refresh marché</button>
-        <button onClick={resetPaperAccount}>Reset paper account</button>
-        <button onClick={autoStart}>Auto ON</button>
-        <button onClick={autoStop}>Auto OFF</button>
-      </div>
-
-      <div style={{ ...cardStyle(), marginBottom: 20 }}>
-        <div style={{ display: "flex", gap: 20, flexWrap: "wrap", alignItems: "center" }}>
-          <div>
-            <strong>Statut du bot:</strong>{" "}
-            <span style={{ color: state?.running ? "#5df28c" : "#ff9b9b", fontWeight: "bold" }}>
-              {botStatus}
-            </span>
-          </div>
-          <div>
-            <strong>Mode auto:</strong>{" "}
-            <span style={{ color: state?.auto_enabled ? "#5df28c" : "#ff9b9b", fontWeight: "bold" }}>
-              {autoStatus}
-            </span>
-          </div>
-          <div><strong>Dernière mise à jour:</strong> {lastUpdatedText}</div>
-          <div><strong>Chargement:</strong> {loading ? "oui" : "non"}</div>
-          <div><strong>Ticks:</strong> {state?.tick_count ?? 0}</div>
-          <div><strong>Positions ouvertes:</strong> {state?.open_positions ?? 0}</div>
+      <div style={{ maxWidth: 1650, margin: "0 auto" }}>
+        <div style={{ marginBottom: 18 }}>
+          <h1 style={{ margin: 0, fontSize: 52, lineHeight: 1.04, fontWeight: 900 }}>
+            MEXC AI Trading Bot v10 Smart Risk
+          </h1>
+          <p style={{ marginTop: 12, color: "#cbd5e1", fontSize: 21 }}>
+            Break-even, trailing stop, filtre marché global et journal enrichi.
+          </p>
         </div>
 
-        <div style={{ marginTop: 16, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-          <label>
-            <strong>Intervalle auto (sec): </strong>
-            <input
-              type="number"
-              min="10"
-              max="300"
-              value={autoInterval}
-              onChange={(e) => setAutoInterval(e.target.value)}
-              style={{ marginLeft: 8, padding: 6, borderRadius: 8, width: 90 }}
-            />
-          </label>
-          <button onClick={saveInterval}>Enregistrer intervalle</button>
-          <div><strong>Intervalle actuel:</strong> {state?.auto_interval_seconds ?? "-"} sec</div>
-          <div><strong>Régime:</strong> <span style={badgeStyle(marketRegime.regime)}>{String(marketRegime.regime || "neutral").toUpperCase()}</span></div>
-          <div><strong>Nouveaux trades autorisés:</strong> <span style={badgeStyle(marketRegime.allow_new_trades ? "no" : "yes")}>{marketRegime.allow_new_trades ? "OUI" : "NON"}</span></div>
+        <div style={{ display: "flex", gap: 10, marginBottom: 18, flexWrap: "wrap" }}>
+          <button style={buttonStyle("green")} onClick={startBot}>Démarrer</button>
+          <button style={buttonStyle("red")} onClick={stopBot}>Arrêter</button>
+          <button style={buttonStyle()} onClick={tickBot}>Lancer un tick</button>
+          <button style={buttonStyle()} onClick={refreshAll}>Rafraîchir</button>
+          <button style={buttonStyle()} onClick={forceMarketRefresh}>Forcer refresh marché</button>
+          <button style={buttonStyle("gold")} onClick={resetPaperAccount}>Reset paper account</button>
+          <button style={buttonStyle("green")} onClick={autoStart}>Auto ON</button>
+          <button style={buttonStyle("red")} onClick={autoStop}>Auto OFF</button>
         </div>
-      </div>
 
-      {stats && (
-        <div
-          style={{
-            marginBottom: 20,
-            display: "grid",
-            gridTemplateColumns: "repeat(4, 1fr)",
-            gap: 12,
-          }}
-        >
-          {[
-            ["Capital départ", stats.starting_equity_usd, "#ffffff"],
-            ["Capital actuel", stats.equity_usd, "#ffffff"],
-            ["PnL réalisé", stats.realized_pnl_usd, pnlColor(stats.realized_pnl_usd)],
-            ["PnL non réalisé", stats.unrealized_pnl_usd, pnlColor(stats.unrealized_pnl_usd)],
-            ["PnL total", stats.total_pnl_usd, pnlColor(stats.total_pnl_usd)],
-            ["Wins", stats.wins, "#5df28c"],
-            ["Losses", stats.losses, "#ff9b9b"],
-            ["Win rate", `${stats.win_rate_pct}%`, "#ffffff"],
-          ].map(([label, value, color]) => (
-            <div key={label} style={cardStyle()}>
-              <div style={{ opacity: 0.8, marginBottom: 8 }}>{label}</div>
-              <div style={{ fontSize: 26, fontWeight: "bold", color }}>{value}</div>
+        <div style={{ ...surfaceStyle(), marginBottom: 18 }}>
+          <div
+            style={{
+              display: "flex",
+              gap: 20,
+              flexWrap: "wrap",
+              alignItems: "center",
+              fontSize: 16,
+            }}
+          >
+            <div><strong>Statut du bot:</strong> <span style={{ color: state?.running ? "#4ade80" : "#f87171", fontWeight: 900 }}>{botStatus}</span></div>
+            <div><strong>Mode auto:</strong> <span style={{ color: state?.auto_enabled ? "#4ade80" : "#f87171", fontWeight: 900 }}>{autoStatus}</span></div>
+            <div><strong>Dernière mise à jour:</strong> {lastUpdatedText}</div>
+            <div><strong>Chargement:</strong> {loading ? "oui" : "non"}</div>
+            <div><strong>Ticks:</strong> {state?.tick_count ?? 0}</div>
+            <div><strong>Positions ouvertes:</strong> {state?.open_positions ?? 0}</div>
+          </div>
+
+          <div
+            style={{
+              marginTop: 16,
+              display: "flex",
+              gap: 14,
+              alignItems: "center",
+              flexWrap: "wrap",
+            }}
+          >
+            <label style={{ display: "flex", alignItems: "center", gap: 10, fontWeight: 700 }}>
+              Intervalle auto (sec):
+              <input
+                type="number"
+                min="10"
+                max="300"
+                value={autoInterval}
+                onChange={(e) => setAutoInterval(e.target.value)}
+                style={{
+                  padding: "8px 12px",
+                  borderRadius: 12,
+                  width: 92,
+                  border: "1px solid rgba(255,255,255,0.08)",
+                  background: "#0b1730",
+                  color: "#fff",
+                  fontWeight: 700,
+                }}
+              />
+            </label>
+            <button style={buttonStyle()} onClick={saveInterval}>Enregistrer intervalle</button>
+            <div><strong>Intervalle actuel:</strong> {state?.auto_interval_seconds ?? "-"} sec</div>
+            <div><strong>Régime:</strong> <span style={badgeStyle(marketRegime.regime)}>{String(marketRegime.regime || "neutral").toUpperCase()}</span></div>
+            <div><strong>Nouveaux trades autorisés:</strong> <span style={badgeStyle(marketRegime.allow_new_trades ? "yes" : "no")}>{marketRegime.allow_new_trades ? "OUI" : "NON"}</span></div>
+          </div>
+        </div>
+
+        {stats && (
+          <div
+            style={{
+              marginBottom: 18,
+              display: "grid",
+              gridTemplateColumns: "repeat(4, minmax(0,1fr))",
+              gap: 14,
+            }}
+          >
+            {[
+              ["Capital départ", stats.starting_equity_usd, "#fff"],
+              ["Capital actuel", stats.equity_usd, "#fff"],
+              ["PnL réalisé", stats.realized_pnl_usd, pnlColor(stats.realized_pnl_usd)],
+              ["PnL non réalisé", stats.unrealized_pnl_usd, pnlColor(stats.unrealized_pnl_usd)],
+              ["PnL total", stats.total_pnl_usd, pnlColor(stats.total_pnl_usd)],
+              ["Wins", stats.wins, "#4ade80"],
+              ["Losses", stats.losses, "#f87171"],
+              ["Win rate", `${stats.win_rate_pct}%`, "#fff"],
+            ].map(([label, value, color]) => (
+              <div key={label} style={statCardStyle()}>
+                <div style={{ color: "#9fb3d1", marginBottom: 12, fontSize: 15, fontWeight: 700 }}>{label}</div>
+                <div style={{ fontSize: 25, fontWeight: 900, color }}>{value}</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {error && (
+          <div
+            style={{
+              marginBottom: 18,
+              padding: 14,
+              borderRadius: 16,
+              background: "rgba(127,29,29,0.55)",
+              color: "#fecaca",
+              whiteSpace: "pre-wrap",
+              border: "1px solid rgba(248,113,113,0.25)",
+            }}
+          >
+            {error}
+          </div>
+        )}
+
+        <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: 16, marginBottom: 16 }}>
+          <section style={surfaceStyle()}>
+            <h2 style={{ marginTop: 0, fontSize: 24 }}>Marché valide</h2>
+            <div style={{ maxHeight: 420, overflow: "auto", borderRadius: 16 }}>
+              <table style={tableStyle()}>
+                <thead>
+                  <tr>
+                    <th style={thStyle()}>Symbole</th>
+                    <th style={thStyle()}>Prix</th>
+                    <th style={thStyle()}>24h %</th>
+                    <th style={thStyle()}>Volume</th>
+                    <th style={thStyle()}>Score</th>
+                    <th style={thStyle()}>Qualité</th>
+                    <th style={thStyle()}>Cooldown</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {marketRows.length === 0 ? (
+                    <tr><td style={tdStyle()} colSpan={7}>Aucune donnée marché valide</td></tr>
+                  ) : (
+                    marketRows.map((row) => {
+                      const onCooldown = cooldownMap[row.symbol] && Date.now() / 1000 < cooldownMap[row.symbol];
+                      return (
+                        <tr key={row.symbol}>
+                          <td style={tdStyle()}>{row.symbol}</td>
+                          <td style={tdStyle()}>{row.price}</td>
+                          <td style={{ ...tdStyle(), color: pnlColor(row.change_24h), fontWeight: 800 }}>{row.change_24h}</td>
+                          <td style={tdStyle()}>{row.volume}</td>
+                          <td style={tdStyle()}>{row.score}</td>
+                          <td style={tdStyle()}><span style={badgeStyle(row.quality)}>{String(row.quality || "").toUpperCase()}</span></td>
+                          <td style={tdStyle()}><span style={badgeStyle(onCooldown ? "yes" : "no")}>{onCooldown ? "OUI" : "NON"}</span></td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
             </div>
-          ))}
+          </section>
+
+          <section style={surfaceStyle()}>
+            <h2 style={{ marginTop: 0, fontSize: 24 }}>État</h2>
+            <pre style={{ whiteSpace: "pre-wrap", maxHeight: 420, overflow: "auto", margin: 0, color: "#dbeafe" }}>
+              {JSON.stringify(state, null, 2)}
+            </pre>
+          </section>
         </div>
-      )}
 
-      {error && (
-        <div
-          style={{
-            marginBottom: 20,
-            padding: 12,
-            borderRadius: 12,
-            background: "#4a1626",
-            color: "#ffd2d2",
-            whiteSpace: "pre-wrap",
-          }}
-        >
-          {error}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+          <section style={surfaceStyle()}>
+            <h2 style={{ marginTop: 0, fontSize: 24 }}>Positions ouvertes</h2>
+            <div style={{ maxHeight: 420, overflow: "auto", borderRadius: 16 }}>
+              <table style={tableStyle()}>
+                <thead>
+                  <tr>
+                    <th style={thStyle()}>Symbole</th>
+                    <th style={thStyle()}>Side</th>
+                    <th style={thStyle()}>Entrée</th>
+                    <th style={thStyle()}>SL</th>
+                    <th style={thStyle()}>TP</th>
+                    <th style={thStyle()}>Prix actuel</th>
+                    <th style={thStyle()}>PnL flottant</th>
+                    <th style={thStyle()}>R</th>
+                    <th style={thStyle()}>BE</th>
+                    <th style={thStyle()}>Trail</th>
+                    <th style={thStyle()}>Durée</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {openTrades.length === 0 ? (
+                    <tr><td style={tdStyle()} colSpan={11}>Aucune position ouverte</td></tr>
+                  ) : (
+                    openTrades.map((t) => (
+                      <tr key={t.id}>
+                        <td style={tdStyle()}>{t.symbol}</td>
+                        <td style={tdStyle()}><span style={badgeStyle(t.side)}>{t.side.toUpperCase()}</span></td>
+                        <td style={tdStyle()}>{t.entry}</td>
+                        <td style={tdStyle()}>{t.stop_loss}</td>
+                        <td style={tdStyle()}>{t.take_profit}</td>
+                        <td style={tdStyle()}>{t.current_price}</td>
+                        <td style={{ ...tdStyle(), color: pnlColor(t.unrealized_pnl_usd), fontWeight: 800 }}>{fmtNum(t.unrealized_pnl_usd)}</td>
+                        <td style={{ ...tdStyle(), color: pnlColor(t.r_multiple), fontWeight: 800 }}>{fmtNum(t.r_multiple)}</td>
+                        <td style={tdStyle()}><span style={badgeStyle(t.moved_to_break_even ? "yes" : "no")}>{t.moved_to_break_even ? "OUI" : "NON"}</span></td>
+                        <td style={tdStyle()}><span style={badgeStyle(t.trailing_active ? "yes" : "no")}>{t.trailing_active ? "OUI" : "NON"}</span></td>
+                        <td style={tdStyle()}>{t.duration_text || "-"}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section style={surfaceStyle()}>
+            <h2 style={{ marginTop: 0, fontSize: 24 }}>Trades fermés</h2>
+            <div style={{ maxHeight: 420, overflow: "auto", borderRadius: 16 }}>
+              <table style={tableStyle()}>
+                <thead>
+                  <tr>
+                    <th style={thStyle()}>Symbole</th>
+                    <th style={thStyle()}>Side</th>
+                    <th style={thStyle()}>Résultat</th>
+                    <th style={thStyle()}>Raison</th>
+                    <th style={thStyle()}>PnL</th>
+                    <th style={thStyle()}>Durée</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {topClosedTrades.length === 0 ? (
+                    <tr><td style={tdStyle()} colSpan={6}>Aucun trade fermé</td></tr>
+                  ) : (
+                    topClosedTrades.map((t) => (
+                      <tr key={t.id}>
+                        <td style={tdStyle()}>{t.symbol}</td>
+                        <td style={tdStyle()}><span style={badgeStyle(t.side)}>{t.side.toUpperCase()}</span></td>
+                        <td style={tdStyle()}><span style={badgeStyle(t.result)}>{String(t.result || "").toUpperCase()}</span></td>
+                        <td style={tdStyle()}>{t.close_reason || "-"}</td>
+                        <td style={{ ...tdStyle(), color: pnlColor(t.pnl_usd), fontWeight: 800 }}>{fmtNum(t.pnl_usd)}</td>
+                        <td style={tdStyle()}>{t.duration_text || "-"}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
         </div>
-      )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: 16, marginBottom: 16 }}>
-        <section style={cardStyle()}>
-          <h2>Marché valide</h2>
-          <table style={tableStyle()}>
-            <thead>
-              <tr>
-                <th style={thtd()}>Symbole</th>
-                <th style={thtd()}>Prix</th>
-                <th style={thtd()}>24h %</th>
-                <th style={thtd()}>Volume</th>
-                <th style={thtd()}>Score</th>
-                <th style={thtd()}>Qualité</th>
-                <th style={thtd()}>Cooldown</th>
-              </tr>
-            </thead>
-            <tbody>
-              {marketRows.length === 0 ? (
-                <tr><td style={thtd()} colSpan={7}>Aucune donnée marché valide</td></tr>
-              ) : (
-                marketRows.map((row) => {
-                  const onCooldown = cooldownMap[row.symbol] && Date.now() / 1000 < cooldownMap[row.symbol];
-                  return (
-                    <tr key={row.symbol}>
-                      <td style={thtd()}>{row.symbol}</td>
-                      <td style={thtd()}>{row.price}</td>
-                      <td style={{ ...thtd(), color: pnlColor(row.change_24h) }}>{row.change_24h}</td>
-                      <td style={thtd()}>{row.volume}</td>
-                      <td style={thtd()}>{row.score}</td>
-                      <td style={thtd()}><span style={badgeStyle(row.quality)}>{String(row.quality || "").toUpperCase()}</span></td>
-                      <td style={thtd()}><span style={badgeStyle(onCooldown ? "yes" : "no")}>{onCooldown ? "OUI" : "NON"}</span></td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </section>
-
-        <section style={cardStyle()}>
-          <h2>État</h2>
-          <pre style={{ whiteSpace: "pre-wrap", maxHeight: 420, overflow: "auto" }}>
-            {JSON.stringify(state, null, 2)}
-          </pre>
-        </section>
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
-        <section style={cardStyle()}>
-          <h2>Positions ouvertes</h2>
-          <table style={tableStyle()}>
-            <thead>
-              <tr>
-                <th style={thtd()}>Symbole</th>
-                <th style={thtd()}>Side</th>
-                <th style={thtd()}>Entrée</th>
-                <th style={thtd()}>SL</th>
-                <th style={thtd()}>TP</th>
-                <th style={thtd()}>Prix actuel</th>
-                <th style={thtd()}>PnL flottant</th>
-                <th style={thtd()}>R</th>
-                <th style={thtd()}>BE</th>
-                <th style={thtd()}>Trail</th>
-                <th style={thtd()}>Durée</th>
-              </tr>
-            </thead>
-            <tbody>
-              {openTrades.length === 0 ? (
-                <tr><td style={thtd()} colSpan={11}>Aucune position ouverte</td></tr>
-              ) : (
-                openTrades.map((t) => (
-                  <tr key={t.id}>
-                    <td style={thtd()}>{t.symbol}</td>
-                    <td style={thtd()}><span style={badgeStyle(t.side)}>{t.side.toUpperCase()}</span></td>
-                    <td style={thtd()}>{t.entry}</td>
-                    <td style={thtd()}>{t.stop_loss}</td>
-                    <td style={thtd()}>{t.take_profit}</td>
-                    <td style={thtd()}>{t.current_price}</td>
-                    <td style={{ ...thtd(), color: pnlColor(t.unrealized_pnl_usd) }}>{fmtNum(t.unrealized_pnl_usd)}</td>
-                    <td style={{ ...thtd(), color: pnlColor(t.r_multiple) }}>{fmtNum(t.r_multiple)}</td>
-                    <td style={thtd()}><span style={badgeStyle(t.moved_to_break_even ? "no" : "yes")}>{t.moved_to_break_even ? "OUI" : "NON"}</span></td>
-                    <td style={thtd()}><span style={badgeStyle(t.trailing_active ? "no" : "yes")}>{t.trailing_active ? "OUI" : "NON"}</span></td>
-                    <td style={thtd()}>{t.duration_text || "-"}</td>
+        <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: 16 }}>
+          <section style={surfaceStyle()}>
+            <h2 style={{ marginTop: 0, fontSize: 24 }}>Signaux récents</h2>
+            <div style={{ maxHeight: 420, overflow: "auto", borderRadius: 16 }}>
+              <table style={tableStyle()}>
+                <thead>
+                  <tr>
+                    <th style={thStyle()}>Symbole</th>
+                    <th style={thStyle()}>Side</th>
+                    <th style={thStyle()}>24h %</th>
+                    <th style={thStyle()}>Score</th>
+                    <th style={thStyle()}>Qualité</th>
+                    <th style={thStyle()}>Raison</th>
+                    <th style={thStyle()}>Créé</th>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </section>
+                </thead>
+                <tbody>
+                  {topSignals.length === 0 ? (
+                    <tr><td style={tdStyle()} colSpan={7}>Aucun signal</td></tr>
+                  ) : (
+                    topSignals.map((s, i) => (
+                      <tr key={`${s.symbol}-${s.created_at}-${i}`}>
+                        <td style={tdStyle()}>{s.symbol}</td>
+                        <td style={tdStyle()}><span style={badgeStyle(s.side)}>{s.side.toUpperCase()}</span></td>
+                        <td style={{ ...tdStyle(), color: pnlColor(s.change_24h), fontWeight: 800 }}>{s.change_24h}</td>
+                        <td style={tdStyle()}>{s.score}</td>
+                        <td style={tdStyle()}><span style={badgeStyle(s.quality)}>{String(s.quality || "").toUpperCase()}</span></td>
+                        <td style={tdStyle()}>{s.reason || "-"}</td>
+                        <td style={tdStyle()}>{formatTs(s.created_at)}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
 
-        <section style={cardStyle()}>
-          <h2>Trades fermés</h2>
-          <table style={tableStyle()}>
-            <thead>
-              <tr>
-                <th style={thtd()}>Symbole</th>
-                <th style={thtd()}>Side</th>
-                <th style={thtd()}>Résultat</th>
-                <th style={thtd()}>Raison</th>
-                <th style={thtd()}>PnL</th>
-                <th style={thtd()}>Durée</th>
-              </tr>
-            </thead>
-            <tbody>
-              {closedTrades.length === 0 ? (
-                <tr><td style={thtd()} colSpan={6}>Aucun trade fermé</td></tr>
-              ) : (
-                closedTrades.map((t) => (
-                  <tr key={t.id}>
-                    <td style={thtd()}>{t.symbol}</td>
-                    <td style={thtd()}><span style={badgeStyle(t.side)}>{t.side.toUpperCase()}</span></td>
-                    <td style={thtd()}><span style={badgeStyle(t.result)}>{String(t.result || "").toUpperCase()}</span></td>
-                    <td style={thtd()}>{t.close_reason || "-"}</td>
-                    <td style={{ ...thtd(), color: pnlColor(t.pnl_usd) }}>{fmtNum(t.pnl_usd)}</td>
-                    <td style={thtd()}>{t.duration_text || "-"}</td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </section>
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: 16 }}>
-        <section style={cardStyle()}>
-          <h2>Signaux</h2>
-          <table style={tableStyle()}>
-            <thead>
-              <tr>
-                <th style={thtd()}>Symbole</th>
-                <th style={thtd()}>Side</th>
-                <th style={thtd()}>24h %</th>
-                <th style={thtd()}>Score</th>
-                <th style={thtd()}>Qualité</th>
-                <th style={thtd()}>Raison</th>
-                <th style={thtd()}>Créé</th>
-              </tr>
-            </thead>
-            <tbody>
-              {signals.length === 0 ? (
-                <tr><td style={thtd()} colSpan={7}>Aucun signal</td></tr>
-              ) : (
-                signals.map((s, i) => (
-                  <tr key={`${s.symbol}-${s.created_at}-${i}`}>
-                    <td style={thtd()}>{s.symbol}</td>
-                    <td style={thtd()}><span style={badgeStyle(s.side)}>{s.side.toUpperCase()}</span></td>
-                    <td style={{ ...thtd(), color: pnlColor(s.change_24h) }}>{s.change_24h}</td>
-                    <td style={thtd()}>{s.score}</td>
-                    <td style={thtd()}><span style={badgeStyle(s.quality)}>{String(s.quality || "").toUpperCase()}</span></td>
-                    <td style={thtd()}>{s.reason || "-"}</td>
-                    <td style={thtd()}>{formatTs(s.created_at)}</td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </section>
-
-        <section style={cardStyle()}>
-          <h2>Configuration</h2>
-          <pre style={{ whiteSpace: "pre-wrap", maxHeight: 420, overflow: "auto" }}>
-            {JSON.stringify(config, null, 2)}
-          </pre>
-        </section>
+          <section style={surfaceStyle()}>
+            <h2 style={{ marginTop: 0, fontSize: 24 }}>Configuration</h2>
+            <pre style={{ whiteSpace: "pre-wrap", maxHeight: 420, overflow: "auto", margin: 0, color: "#dbeafe" }}>
+              {JSON.stringify(config, null, 2)}
+            </pre>
+          </section>
+        </div>
       </div>
     </main>
   );

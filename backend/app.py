@@ -4,7 +4,7 @@ import time
 from typing import Dict, List
 import httpx
 
-app = FastAPI(title="MEXC AI Bot Backend v9")
+app = FastAPI(title="MEXC AI Bot Backend v10")
 
 app.add_middleware(
     CORSMiddleware,
@@ -18,26 +18,10 @@ app.add_middleware(
 )
 
 DESIRED_SYMBOLS = [
-    "BTC/USDT",
-    "ETH/USDT",
-    "SOL/USDT",
-    "XRP/USDT",
-    "ADA/USDT",
-    "DOGE/USDT",
-    "TRX/USDT",
-    "AVAX/USDT",
-    "LINK/USDT",
-    "DOT/USDT",
-    "TON/USDT",
-    "SHIB/USDT",
-    "LTC/USDT",
-    "BCH/USDT",
-    "UNI/USDT",
-    "ATOM/USDT",
-    "XLM/USDT",
-    "ETC/USDT",
-    "APT/USDT",
-    "NEAR/USDT",
+    "BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT", "ADA/USDT",
+    "DOGE/USDT", "TRX/USDT", "AVAX/USDT", "LINK/USDT", "DOT/USDT",
+    "TON/USDT", "SHIB/USDT", "LTC/USDT", "BCH/USDT", "UNI/USDT",
+    "ATOM/USDT", "XLM/USDT", "ETC/USDT", "APT/USDT", "NEAR/USDT",
 ]
 
 SYMBOLS = list(DESIRED_SYMBOLS)
@@ -47,8 +31,14 @@ INITIAL_EQUITY = 1000.0
 MARKET_CACHE_SECONDS = 30
 SYMBOL_COOLDOWN_SECONDS = 180
 MIN_VALID_PRICE = 0.00001
-MIN_SCORE_TO_OPEN = 0.58
+MIN_SCORE_TO_OPEN = 0.60
 MAX_RECENT_SAME_SYMBOL_SIGNALS = 2
+MAX_NEW_TRADES_PER_10_MIN = 3
+RECENT_TRADE_WINDOW_SECONDS = 600
+
+BREAK_EVEN_TRIGGER_R = 0.35
+TRAILING_TRIGGER_R = 0.75
+TRAILING_LOCK_R = 0.30
 
 bot_state = {
     "running": False,
@@ -102,10 +92,8 @@ def format_duration(seconds: int) -> str:
 
 async def refresh_valid_kraken_pairs() -> bool:
     global KRAKEN_PAIRS
-
     try:
         url = "https://api.kraken.com/0/public/AssetPairs"
-
         async with httpx.AsyncClient(timeout=25.0) as client:
             response = await client.get(
                 url,
@@ -120,10 +108,9 @@ async def refresh_valid_kraken_pairs() -> bool:
         result = payload.get("result", {})
         discovered = {}
 
-        for _pair_key, item in result.items():
+        for _, item in result.items():
             altname = str(item.get("altname", ""))
             wsname = str(item.get("wsname", ""))
-
             candidate = None
 
             if wsname.endswith("/USDT"):
@@ -158,7 +145,7 @@ async def fetch_real_market_data(force: bool = False) -> bool:
                 return False
 
         if not KRAKEN_PAIRS:
-            raise Exception("No valid Kraken USDT pairs found for the selected symbols")
+            raise Exception("No valid Kraken USDT pairs found")
 
         pair_list = ",".join(KRAKEN_PAIRS.values())
         url = "https://api.kraken.com/0/public/Ticker"
@@ -196,15 +183,13 @@ async def fetch_real_market_data(force: bool = False) -> bool:
             volume = float(item["v"][1]) if item.get("v") else 0.0
             open_price = float(item["o"]) if item.get("o") else 0.0
 
-            change_24h = 0.0
-            if open_price > 0:
-                change_24h = ((price - open_price) / open_price) * 100.0
-
+            change_24h = ((price - open_price) / open_price * 100.0) if open_price > 0 else 0.0
             abs_change = abs(change_24h)
+
             momentum_score = max(min((abs_change + 1.5) / 7.5, 1.0), 0.0)
             direction_score = max(min((change_24h + 8) / 16, 1.0), 0.0)
             volume_score = min(volume / 100000.0, 1.0)
-            trend_strength = round(abs(change_24h), 3)
+            trend_strength = round(abs_change, 3)
 
             quality_score = round(
                 (momentum_score * 0.40) + (direction_score * 0.20) + (volume_score * 0.40),
@@ -257,22 +242,70 @@ def recent_signal_count_for_symbol(symbol: str) -> int:
     return sum(1 for s in signals[:20] if s.get("symbol") == symbol)
 
 
+def recent_opened_trade_count() -> int:
+    now_ts = int(time.time())
+    return sum(
+        1 for t in trades
+        if int(t.get("opened_at", 0)) >= now_ts - RECENT_TRADE_WINDOW_SECONDS
+    )
+
+
 def calc_trade_pnl(price_now: float, trade: Dict) -> float:
     if trade["entry"] <= 0 or price_now <= 0:
         return 0.0
-
     multiplier = 8.0
     if trade["side"] == "long":
-        pnl = ((price_now - trade["entry"]) / trade["entry"]) * trade["risk_usd"] * multiplier
+        return ((price_now - trade["entry"]) / trade["entry"]) * trade["risk_usd"] * multiplier
+    return ((trade["entry"] - price_now) / trade["entry"]) * trade["risk_usd"] * multiplier
+
+
+def calc_trade_r(price_now: float, trade: Dict) -> float:
+    risk_usd = float(trade.get("risk_usd", 0.0))
+    if risk_usd <= 0:
+        return 0.0
+    pnl = calc_trade_pnl(price_now, trade)
+    return pnl / risk_usd
+
+
+def get_market_regime() -> Dict:
+    valid = [market_state[s] for s in SYMBOLS if market_state[s]["price"] > MIN_VALID_PRICE]
+    if not valid:
+        return {
+            "avg_change_24h": 0.0,
+            "avg_score": 0.0,
+            "bullish_count": 0,
+            "bearish_count": 0,
+            "regime": "neutral",
+            "allow_new_trades": True,
+        }
+
+    avg_change = sum(v["change_24h"] for v in valid) / len(valid)
+    avg_score = sum(v["score"] for v in valid) / len(valid)
+    bullish_count = sum(1 for v in valid if v["change_24h"] > 0)
+    bearish_count = sum(1 for v in valid if v["change_24h"] < 0)
+
+    if avg_change >= 0.35 and bullish_count >= bearish_count:
+        regime = "bullish"
+    elif avg_change <= -0.35 and bearish_count >= bullish_count:
+        regime = "bearish"
     else:
-        pnl = ((trade["entry"] - price_now) / trade["entry"]) * trade["risk_usd"] * multiplier
-    return pnl
+        regime = "neutral"
+
+    allow_new_trades = avg_score >= 0.35
+
+    return {
+        "avg_change_24h": round(avg_change, 3),
+        "avg_score": round(avg_score, 3),
+        "bullish_count": bullish_count,
+        "bearish_count": bearish_count,
+        "regime": regime,
+        "allow_new_trades": allow_new_trades,
+    }
 
 
 def enrich_trade_runtime(trade: Dict) -> Dict:
     t = dict(trade)
     now_ts = int(time.time())
-
     opened_at = int(t.get("opened_at", now_ts))
     closed_at = t.get("closed_at")
     end_ts = int(closed_at) if closed_at else now_ts
@@ -286,6 +319,7 @@ def enrich_trade_runtime(trade: Dict) -> Dict:
         unrealized = calc_trade_pnl(price, t)
         t["current_price"] = round_price(price)
         t["unrealized_pnl_usd"] = round(unrealized, 4)
+        t["r_multiple"] = round(calc_trade_r(price, t), 4)
 
     return t
 
@@ -324,9 +358,8 @@ def get_stats() -> Dict:
 def create_trade(candidate: Dict) -> Dict:
     risk_usd = bot_state["equity_usd"] * (bot_state["risk_per_trade_pct"] / 100.0)
     entry = candidate["price"]
-    side = candidate["side"]
 
-    if side == "long":
+    if candidate["side"] == "long":
         stop = entry * 0.993
         take_profit = entry * 1.018
     else:
@@ -336,16 +369,21 @@ def create_trade(candidate: Dict) -> Dict:
     return {
         "id": f"trade_{int(time.time() * 1000)}",
         "symbol": candidate["symbol"],
-        "side": side,
+        "side": candidate["side"],
         "entry": round_price(entry),
         "stop_loss": round_price(stop),
         "take_profit": round_price(take_profit),
+        "initial_stop_loss": round_price(stop),
+        "initial_take_profit": round_price(take_profit),
         "risk_usd": round(risk_usd, 4),
         "score": candidate["score"],
         "quality": candidate["quality"],
         "status": "open",
         "opened_at": int(time.time()),
         "entry_reason": candidate.get("reason", ""),
+        "moved_to_break_even": False,
+        "trailing_active": False,
+        "highest_r_seen": 0.0,
     }
 
 
@@ -359,6 +397,24 @@ def manage_open_trades() -> List[Dict]:
         price = market_state[trade["symbol"]]["price"]
         if not price:
             continue
+
+        current_r = calc_trade_r(price, trade)
+        trade["highest_r_seen"] = max(float(trade.get("highest_r_seen", 0.0)), current_r)
+
+        if not trade.get("moved_to_break_even") and current_r >= BREAK_EVEN_TRIGGER_R:
+            trade["stop_loss"] = trade["entry"]
+            trade["moved_to_break_even"] = True
+
+        if current_r >= TRAILING_TRIGGER_R:
+            trade["trailing_active"] = True
+            if trade["side"] == "long":
+                desired_stop = trade["entry"] * (1 + (TRAILING_LOCK_R / 8.0))
+                if desired_stop > trade["stop_loss"]:
+                    trade["stop_loss"] = round_price(desired_stop)
+            else:
+                desired_stop = trade["entry"] * (1 - (TRAILING_LOCK_R / 8.0))
+                if desired_stop < trade["stop_loss"]:
+                    trade["stop_loss"] = round_price(desired_stop)
 
         if trade["side"] == "long":
             hit_stop = price <= trade["stop_loss"]
@@ -384,8 +440,13 @@ def manage_open_trades() -> List[Dict]:
                 trade["result"] = "win"
                 trade["close_reason"] = "take_profit"
             elif hit_stop:
-                trade["result"] = "loss"
-                trade["close_reason"] = "stop_loss"
+                if trade.get("trailing_active"):
+                    trade["close_reason"] = "trailing_stop"
+                elif trade.get("moved_to_break_even") and abs(price - trade["entry"]) / trade["entry"] < 0.002:
+                    trade["close_reason"] = "break_even_stop"
+                else:
+                    trade["close_reason"] = "stop_loss"
+                trade["result"] = "win" if pnl > 0 else "loss"
             elif quality_drop:
                 trade["result"] = "win" if pnl > 0 else "loss"
                 trade["close_reason"] = "quality_drop"
@@ -435,6 +496,7 @@ async def run_tick_cycle():
         return {"ok": False, "message": bot_state["last_error"] or "Market data fetch failed"}
 
     closed_trades = manage_open_trades()
+    regime = get_market_regime()
 
     ranked = []
     for symbol in SYMBOLS:
@@ -449,6 +511,11 @@ async def run_tick_cycle():
             side = "short"
         elif data["score"] >= 0.55 and data["trend_strength"] >= 0.55:
             side = "long" if data["change_24h"] >= 0 else "short"
+
+        if regime["regime"] == "bullish" and side == "short" and data["score"] < 0.72:
+            side = "flat"
+        if regime["regime"] == "bearish" and side == "long" and data["score"] < 0.72:
+            side = "flat"
 
         ranked.append(
             {
@@ -469,40 +536,41 @@ async def run_tick_cycle():
     new_signals = []
     opened_trade = None
 
-    for candidate in ranked:
-        if candidate["side"] == "flat":
-            continue
-        if candidate["cooldown"]:
-            continue
-        if get_open_positions_count() >= bot_state["max_open_positions"]:
-            break
-        if has_open_trade_for_symbol(candidate["symbol"]):
-            continue
-        if recent_signal_count_for_symbol(candidate["symbol"]) >= MAX_RECENT_SAME_SYMBOL_SIGNALS:
-            continue
-        if candidate["price"] <= MIN_VALID_PRICE:
-            continue
+    if regime["allow_new_trades"] and recent_opened_trade_count() < MAX_NEW_TRADES_PER_10_MIN:
+        for candidate in ranked:
+            if candidate["side"] == "flat":
+                continue
+            if candidate["cooldown"]:
+                continue
+            if get_open_positions_count() >= bot_state["max_open_positions"]:
+                break
+            if has_open_trade_for_symbol(candidate["symbol"]):
+                continue
+            if recent_signal_count_for_symbol(candidate["symbol"]) >= MAX_RECENT_SAME_SYMBOL_SIGNALS:
+                continue
+            if candidate["price"] <= MIN_VALID_PRICE:
+                continue
 
-        signal = {
-            "symbol": candidate["symbol"],
-            "side": candidate["side"],
-            "score": candidate["score"],
-            "price": candidate["price"],
-            "change_24h": candidate["change_24h"],
-            "volume": candidate["volume"],
-            "trend_strength": candidate["trend_strength"],
-            "quality": candidate["quality"],
-            "reason": "top20 trend + momentum + volume + cooldown filter",
-            "created_at": int(time.time()),
-        }
-        signals.insert(0, signal)
-        new_signals.append(signal)
+            signal = {
+                "symbol": candidate["symbol"],
+                "side": candidate["side"],
+                "score": candidate["score"],
+                "price": candidate["price"],
+                "change_24h": candidate["change_24h"],
+                "volume": candidate["volume"],
+                "trend_strength": candidate["trend_strength"],
+                "quality": candidate["quality"],
+                "reason": f"regime={regime['regime']} + trend + momentum + volume + cooldown filter",
+                "created_at": int(time.time()),
+            }
+            signals.insert(0, signal)
+            new_signals.append(signal)
 
-        if candidate["score"] >= MIN_SCORE_TO_OPEN:
-            opened_trade = create_trade(candidate)
-            trades.insert(0, opened_trade)
-            opened_trade = enrich_trade_runtime(opened_trade)
-            break
+            if candidate["score"] >= MIN_SCORE_TO_OPEN:
+                opened_trade = create_trade(candidate | {"reason": signal["reason"]})
+                trades.insert(0, opened_trade)
+                opened_trade = enrich_trade_runtime(opened_trade)
+                break
 
     return {
         "ok": True,
@@ -513,6 +581,7 @@ async def run_tick_cycle():
         "closed_trades": closed_trades,
         "equity_usd": bot_state["equity_usd"],
         "stats": get_stats(),
+        "market_regime": regime,
     }
 
 
@@ -555,6 +624,7 @@ def get_state():
         "market": market_state,
         "cooldowns": symbol_cooldowns,
         "valid_kraken_pairs": KRAKEN_PAIRS,
+        "market_regime": get_market_regime(),
     }
 
 
@@ -593,7 +663,12 @@ async def api_market_refresh():
     if not ok:
         return {"ok": False, "message": bot_state["last_error"]}
 
-    return {"ok": True, "market": market_state, "valid_kraken_pairs": KRAKEN_PAIRS}
+    return {
+        "ok": True,
+        "market": market_state,
+        "valid_kraken_pairs": KRAKEN_PAIRS,
+        "market_regime": get_market_regime(),
+    }
 
 
 @app.post("/api/v1/bot/reset")

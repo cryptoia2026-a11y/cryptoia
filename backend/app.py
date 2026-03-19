@@ -1,10 +1,13 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import time
+import json
+import os
+from pathlib import Path
 from typing import Dict, List
 import httpx
 
-app = FastAPI(title="MEXC AI Bot Backend v10.4 Intelligent Entries")
+app = FastAPI(title="MEXC AI Bot Backend v10.5 Persistent State")
 
 app.add_middleware(
     CORSMiddleware,
@@ -30,13 +33,6 @@ DESIRED_SYMBOLS = [
     "LTC/USDT",
     "BCH/USDT",
     "UNI/USDT",
-    "GRASS/USDT",
-    "HYPE/USDT",
-    "RIVER/USDT",
-    "TRUMP/USDT",
-    "ZEC/USDT",
-    "SUI/USDT",
-    "TAO/USDT",
 ]
 
 SYMBOLS = list(DESIRED_SYMBOLS)
@@ -61,6 +57,9 @@ TIMED_EXIT_MAX_ABS_PNL = 8.0
 
 SIMULATED_LEVERAGE = 10.0
 
+DATA_DIR = Path(os.getenv("DATA_DIR", "/tmp"))
+STATE_FILE = DATA_DIR / "mexc_ai_bot_state.json"
+
 bot_state = {
     "running": False,
     "auto_enabled": False,
@@ -70,7 +69,7 @@ bot_state = {
     "equity_usd": INITIAL_EQUITY,
     "starting_equity_usd": INITIAL_EQUITY,
     "max_open_positions": 4,
-    "risk_per_trade_pct": 5.0,  # ~50$ sur 1000$
+    "risk_per_trade_pct": 5.0,
     "symbols": SYMBOLS,
     "tick_count": 0,
     "last_error": "",
@@ -107,6 +106,10 @@ symbol_cooldowns: Dict[str, int] = {s: 0 for s in SYMBOLS}
 last_market_fetch_ts = 0.0
 
 
+def ensure_data_dir() -> None:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+
 def round_price(value: float) -> float:
     return round(value, 8 if value < 1 else 6)
 
@@ -121,6 +124,113 @@ def format_duration(seconds: int) -> str:
     if m > 0:
         return f"{m}m {s}s"
     return f"{s}s"
+
+
+def build_default_market_state() -> Dict[str, Dict]:
+    return {
+        s: {
+            "price": 0.0,
+            "change_24h": 0.0,
+            "volume": 0.0,
+            "score": 0.0,
+            "trend_strength": 0.0,
+            "quality": "low",
+        }
+        for s in SYMBOLS
+    }
+
+
+def build_default_previous_market_state() -> Dict[str, Dict]:
+    return build_default_market_state()
+
+
+def build_default_symbol_cooldowns() -> Dict[str, int]:
+    return {s: 0 for s in SYMBOLS}
+
+
+def save_state() -> None:
+    try:
+        ensure_data_dir()
+        payload = {
+            "bot_state": bot_state,
+            "market_state": market_state,
+            "previous_market_state": previous_market_state,
+            "signals": signals,
+            "trades": trades,
+            "symbol_cooldowns": symbol_cooldowns,
+            "last_market_fetch_ts": last_market_fetch_ts,
+            "saved_at": int(time.time()),
+        }
+        tmp_file = STATE_FILE.with_suffix(".tmp")
+        with open(tmp_file, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_file, STATE_FILE)
+    except Exception as e:
+        print(f"save_state error: {e}")
+
+
+def load_state() -> None:
+    global last_market_fetch_ts
+
+    try:
+        ensure_data_dir()
+        if not STATE_FILE.exists():
+            return
+
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+
+        loaded_bot_state = payload.get("bot_state", {})
+        loaded_market_state = payload.get("market_state", {})
+        loaded_previous_market_state = payload.get("previous_market_state", {})
+        loaded_signals = payload.get("signals", [])
+        loaded_trades = payload.get("trades", [])
+        loaded_symbol_cooldowns = payload.get("symbol_cooldowns", {})
+        loaded_last_market_fetch_ts = payload.get("last_market_fetch_ts", 0.0)
+
+        for key, value in loaded_bot_state.items():
+            if key in bot_state:
+                bot_state[key] = value
+
+        bot_state["symbols"] = SYMBOLS
+
+        default_market = build_default_market_state()
+        default_previous_market = build_default_previous_market_state()
+        default_cooldowns = build_default_symbol_cooldowns()
+
+        for s in SYMBOLS:
+            if s in loaded_market_state and isinstance(loaded_market_state[s], dict):
+                default_market[s].update(loaded_market_state[s])
+
+            if s in loaded_previous_market_state and isinstance(loaded_previous_market_state[s], dict):
+                default_previous_market[s].update(loaded_previous_market_state[s])
+
+            if s in loaded_symbol_cooldowns:
+                try:
+                    default_cooldowns[s] = int(loaded_symbol_cooldowns[s])
+                except Exception:
+                    default_cooldowns[s] = 0
+
+        market_state.clear()
+        market_state.update(default_market)
+
+        previous_market_state.clear()
+        previous_market_state.update(default_previous_market)
+
+        symbol_cooldowns.clear()
+        symbol_cooldowns.update(default_cooldowns)
+
+        signals.clear()
+        signals.extend(loaded_signals if isinstance(loaded_signals, list) else [])
+
+        trades.clear()
+        trades.extend(loaded_trades if isinstance(loaded_trades, list) else [])
+
+        last_market_fetch_ts = float(loaded_last_market_fetch_ts or 0.0)
+
+        print(f"State loaded from {STATE_FILE}")
+    except Exception as e:
+        print(f"load_state error: {e}")
 
 
 async def refresh_valid_kraken_pairs() -> bool:
@@ -157,10 +267,10 @@ async def refresh_valid_kraken_pairs() -> bool:
 
         KRAKEN_PAIRS = discovered
         return True
-
     except Exception as e:
         bot_state["last_error"] = f"refresh_valid_kraken_pairs error: {str(e)}"
         print(bot_state["last_error"])
+        save_state()
         return False
 
 
@@ -196,7 +306,6 @@ async def fetch_real_market_data(force: bool = False) -> bool:
             raise Exception(f"Kraken error: {payload['error']}")
 
         result = payload.get("result", {})
-
         previous_market_state = {k: dict(v) for k, v in market_state.items()}
 
         for s in DESIRED_SYMBOLS:
@@ -249,11 +358,13 @@ async def fetch_real_market_data(force: bool = False) -> bool:
 
         last_market_fetch_ts = now
         bot_state["last_error"] = ""
+        save_state()
         return True
 
     except Exception as e:
         bot_state["last_error"] = f"fetch_real_market_data error: {str(e)}"
         print(bot_state["last_error"])
+        save_state()
         return False
 
 
@@ -522,6 +633,9 @@ def manage_open_trades() -> List[Dict]:
             set_symbol_cooldown(trade["symbol"])
             closed.append(enrich_trade_runtime(trade))
 
+    if closed:
+        save_state()
+
     return closed
 
 
@@ -555,6 +669,7 @@ def reset_paper_account() -> None:
             "quality": "low",
         }
         symbol_cooldowns[s] = 0
+    save_state()
 
 
 async def run_tick_cycle():
@@ -565,6 +680,7 @@ async def run_tick_cycle():
 
     ok = await fetch_real_market_data()
     if not ok:
+        save_state()
         return {"ok": False, "message": bot_state["last_error"] or "Market data fetch failed"}
 
     closed_trades = manage_open_trades()
@@ -653,6 +769,8 @@ async def run_tick_cycle():
                 opened_trade = enrich_trade_runtime(opened_trade)
                 break
 
+    save_state()
+
     return {
         "ok": True,
         "tick_count": bot_state["tick_count"],
@@ -666,14 +784,28 @@ async def run_tick_cycle():
     }
 
 
+@app.on_event("startup")
+async def startup_event():
+    load_state()
+    await refresh_valid_kraken_pairs()
+
+
 @app.get("/")
 def root():
-    return {"message": "Backend online"}
+    return {
+        "message": "Backend online",
+        "state_file": str(STATE_FILE),
+        "state_file_exists": STATE_FILE.exists(),
+    }
 
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "state_file": str(STATE_FILE),
+        "state_file_exists": STATE_FILE.exists(),
+    }
 
 
 @app.get("/api/v1/config")
@@ -688,6 +820,8 @@ def get_config():
         "auto_interval_seconds": bot_state["auto_interval_seconds"],
         "valid_kraken_pairs": KRAKEN_PAIRS,
         "simulated_leverage": SIMULATED_LEVERAGE,
+        "state_file": str(STATE_FILE),
+        "state_file_exists": STATE_FILE.exists(),
     }
 
 
@@ -708,6 +842,8 @@ def get_state():
         "valid_kraken_pairs": KRAKEN_PAIRS,
         "market_regime": get_market_regime(),
         "simulated_leverage": SIMULATED_LEVERAGE,
+        "state_file": str(STATE_FILE),
+        "state_file_exists": STATE_FILE.exists(),
     }
 
 
@@ -746,6 +882,8 @@ async def api_market_refresh():
     if not ok:
         return {"ok": False, "message": bot_state["last_error"]}
 
+    save_state()
+
     return {
         "ok": True,
         "market": market_state,
@@ -764,6 +902,7 @@ def api_bot_reset():
 def start_bot():
     bot_state["running"] = True
     bot_state["last_error"] = ""
+    save_state()
     return {"ok": True, "running": True}
 
 
@@ -771,6 +910,7 @@ def start_bot():
 def stop_bot():
     bot_state["running"] = False
     bot_state["auto_enabled"] = False
+    save_state()
     return {"ok": True, "running": False}
 
 
@@ -779,12 +919,14 @@ def auto_start():
     bot_state["running"] = True
     bot_state["auto_enabled"] = True
     bot_state["last_error"] = ""
+    save_state()
     return {"ok": True, "auto_enabled": True}
 
 
 @app.post("/api/v1/bot/auto-stop")
 def auto_stop():
     bot_state["auto_enabled"] = False
+    save_state()
     return {"ok": True, "auto_enabled": False}
 
 
@@ -793,6 +935,7 @@ def set_interval(payload: Dict):
     seconds = int(payload.get("seconds", 30))
     seconds = max(10, min(seconds, 300))
     bot_state["auto_interval_seconds"] = seconds
+    save_state()
     return {"ok": True, "auto_interval_seconds": seconds}
 
 
@@ -803,6 +946,7 @@ async def tick_bot():
     except Exception as e:
         bot_state["last_error"] = f"tick_bot error: {str(e)}"
         print(bot_state["last_error"])
+        save_state()
         return {"ok": False, "message": bot_state["last_error"]}
 
 
@@ -822,6 +966,7 @@ async def auto_pulse():
         if result.get("ok"):
             bot_state["last_auto_tick_ts"] = now
             result["executed"] = True
+            save_state()
         else:
             result["executed"] = False
 
@@ -830,4 +975,5 @@ async def auto_pulse():
     except Exception as e:
         bot_state["last_error"] = f"auto_pulse error: {str(e)}"
         print(bot_state["last_error"])
+        save_state()
         return {"ok": False, "message": bot_state["last_error"]}

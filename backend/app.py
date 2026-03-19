@@ -37,20 +37,20 @@ KRAKEN_PAIRS: Dict[str, str] = {}
 
 INITIAL_EQUITY = 1000.0
 MARKET_CACHE_SECONDS = 30
-SYMBOL_COOLDOWN_SECONDS = 300
+SYMBOL_COOLDOWN_SECONDS = 240
 MIN_VALID_PRICE = 0.0001
 MIN_SCORE_TO_OPEN = 0.58
 MAX_RECENT_SAME_SYMBOL_SIGNALS = 2
-MAX_NEW_TRADES_PER_10_MIN = 2
+MAX_NEW_TRADES_PER_10_MIN = 3
 RECENT_TRADE_WINDOW_SECONDS = 600
 
-BREAK_EVEN_TRIGGER_R = 0.70
-TRAILING_TRIGGER_R = 1.40
-TRAILING_LOCK_R = 0.70
+BREAK_EVEN_TRIGGER_R = 0.60
+TRAILING_TRIGGER_R = 1.20
+TRAILING_LOCK_R = 0.55
 
 MIN_HOLD_SECONDS = 180
-TIMED_EXIT_SECONDS = 5400
-TIMED_EXIT_MAX_ABS_PNL = 8.0
+TIMED_EXIT_SECONDS = 4200
+TIMED_EXIT_MAX_ABS_PNL = 7.0
 
 SIMULATED_LEVERAGE = 10.0
 
@@ -63,7 +63,7 @@ bot_state = {
     "equity_usd": INITIAL_EQUITY,
     "starting_equity_usd": INITIAL_EQUITY,
     "max_open_positions": 4,
-    "risk_per_trade_pct": 5.0,  # ~50$ de risque sur 1000$
+    "risk_per_trade_pct": 5.0,  # ~50$ sur 1000$
     "symbols": SYMBOLS,
     "tick_count": 0,
     "last_error": "",
@@ -214,7 +214,7 @@ async def fetch_real_market_data(force: bool = False) -> bool:
             change_24h = ((price - open_price) / open_price * 100.0) if open_price > 0 else 0.0
             abs_change = abs(change_24h)
 
-            momentum_score = max(min((abs_change + 1.5) / 7.5, 1.0), 0.0)
+            momentum_score = max(min((abs_change + 1.2) / 7.0, 1.0), 0.0)
             direction_score = max(min((change_24h + 8) / 16, 1.0), 0.0)
             volume_score = min(volume / 100000.0, 1.0)
             trend_strength = round(abs_change, 3)
@@ -224,9 +224,9 @@ async def fetch_real_market_data(force: bool = False) -> bool:
                 3,
             )
 
-            if quality_score >= 0.74:
+            if quality_score >= 0.72:
                 quality = "high"
-            elif quality_score >= 0.58:
+            elif quality_score >= 0.56:
                 quality = "medium"
             else:
                 quality = "low"
@@ -311,9 +311,9 @@ def get_market_regime() -> Dict:
     bullish_count = sum(1 for v in valid if v["change_24h"] > 0)
     bearish_count = sum(1 for v in valid if v["change_24h"] < 0)
 
-    if avg_change >= 0.35 and bullish_count >= bearish_count:
+    if avg_change >= 0.30 and bullish_count >= bearish_count:
         regime = "bullish"
-    elif avg_change <= -0.35 and bearish_count >= bullish_count:
+    elif avg_change <= -0.30 and bearish_count >= bullish_count:
         regime = "bearish"
     else:
         regime = "neutral"
@@ -398,17 +398,17 @@ def is_continuation_signal(symbol: str, current: Dict, previous: Dict, side: str
 
     if side == "long":
         return (
-            price_delta >= -0.30
+            price_delta >= -0.35
             and score_delta >= -0.08
-            and change_delta >= -0.35
-            and trend_delta >= -0.35
+            and change_delta >= -0.45
+            and trend_delta >= -0.40
         )
 
     return (
-        price_delta <= 0.30
+        price_delta <= 0.35
         and score_delta >= -0.08
-        and change_delta <= 0.35
-        and trend_delta >= -0.35
+        and change_delta <= 0.45
+        and trend_delta >= -0.40
     )
 
 
@@ -418,10 +418,10 @@ def create_trade(candidate: Dict) -> Dict:
 
     if candidate["side"] == "long":
         stop = entry * 0.991
-        take_profit = entry * 1.030
+        take_profit = entry * 1.028
     else:
         stop = entry * 1.009
-        take_profit = entry * 0.970
+        take_profit = entry * 0.972
 
     return {
         "id": f"trade_{int(time.time() * 1000)}",
@@ -482,7 +482,7 @@ def manage_open_trades() -> List[Dict]:
 
         pnl = calc_trade_pnl(price, trade)
         age_seconds = int(time.time()) - int(trade["opened_at"])
-        quality_drop = age_seconds >= MIN_HOLD_SECONDS and market_state[trade["symbol"]]["score"] < 0.28
+        quality_drop = age_seconds >= MIN_HOLD_SECONDS and market_state[trade["symbol"]]["score"] < 0.26
         timed_exit = age_seconds > TIMED_EXIT_SECONDS and abs(pnl) < TIMED_EXIT_MAX_ABS_PNL
 
         if hit_stop or hit_tp or quality_drop or timed_exit:
@@ -571,9 +571,9 @@ async def run_tick_cycle():
             continue
 
         side = "flat"
-        if data["score"] >= 0.62 and data["change_24h"] >= 0.30:
+        if data["score"] >= 0.62 and data["change_24h"] >= 0.25:
             side = "long"
-        elif data["score"] >= 0.62 and data["change_24h"] <= -0.30:
+        elif data["score"] >= 0.62 and data["change_24h"] <= -0.25:
             side = "short"
         elif data["score"] >= 0.56 and data["trend_strength"] >= 0.90:
             side = "long" if data["change_24h"] >= 0 else "short"
@@ -581,9 +581,9 @@ async def run_tick_cycle():
         if side != "flat" and not is_continuation_signal(symbol, data, prev, side):
             side = "flat"
 
-        if regime["regime"] == "bullish" and side == "short" and data["score"] < 0.72:
+        if regime["regime"] == "bullish" and side == "short" and data["score"] < 0.74:
             side = "flat"
-        if regime["regime"] == "bearish" and side == "long" and data["score"] < 0.72:
+        if regime["regime"] == "bearish" and side == "long" and data["score"] < 0.74:
             side = "flat"
 
         ranked.append(

@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 import time
 from typing import Dict, List
 import httpx
@@ -10,7 +11,9 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "https://cryptoia-frontend.onrender.com",
+        "https://cryptoia-backend.onrender.com",
         "http://localhost:3000",
+        "http://127.0.0.1:3000",
     ],
     allow_credentials=False,
     allow_methods=["*"],
@@ -63,7 +66,7 @@ bot_state = {
     "equity_usd": INITIAL_EQUITY,
     "starting_equity_usd": INITIAL_EQUITY,
     "max_open_positions": 4,
-    "risk_per_trade_pct": 5.0,  # ~50$ sur 1000$
+    "risk_per_trade_pct": 5.0,
     "symbols": SYMBOLS,
     "tick_count": 0,
     "last_error": "",
@@ -667,6 +670,11 @@ def root():
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/favicon.ico")
+def favicon():
+    return Response(status_code=204)
 
 
 @app.get("/api/v1/config")

@@ -5,7 +5,7 @@ import time
 from typing import Dict, List
 import httpx
 
-app = FastAPI(title="MEXC AI Bot Backend v10.5 Adaptive")
+app = FastAPI(title="MEXC AI Bot Backend v10.6 Diversified")
 
 app.add_middleware(
     CORSMiddleware,
@@ -33,6 +33,22 @@ DESIRED_SYMBOLS = [
     "LTC/USDT",
     "BCH/USDT",
     "UNI/USDT",
+    "ATOM/USDT",
+    "NEAR/USDT",
+    "APT/USDT",
+    "ARB/USDT",
+    "OP/USDT",
+    "INJ/USDT",
+    "FIL/USDT",
+    "SUI/USDT",
+    "SEI/USDT",
+    "PEPE/USDT",
+    "SHIB/USDT",
+    "BONK/USDT",
+    "ZEC/USDT",
+    "TRUMP/USDT",
+    "RIVER/USDT",
+    "GRASS/USDT",
 ]
 
 SYMBOLS = list(DESIRED_SYMBOLS)
@@ -40,12 +56,12 @@ KRAKEN_PAIRS: Dict[str, str] = {}
 
 INITIAL_EQUITY = 1000.0
 MARKET_CACHE_SECONDS = 30
-SYMBOL_COOLDOWN_SECONDS = 240
-MIN_VALID_PRICE = 0.0001
+SYMBOL_COOLDOWN_SECONDS = 420
+MIN_VALID_PRICE = 0.00000001
 
 MIN_SCORE_TO_OPEN = 0.56
-MAX_RECENT_SAME_SYMBOL_SIGNALS = 2
-MAX_NEW_TRADES_PER_10_MIN = 4
+MAX_RECENT_SAME_SYMBOL_SIGNALS = 1
+MAX_NEW_TRADES_PER_10_MIN = 5
 RECENT_TRADE_WINDOW_SECONDS = 600
 
 BREAK_EVEN_TRIGGER_R = 0.70
@@ -105,7 +121,11 @@ last_market_fetch_ts = 0.0
 
 
 def round_price(value: float) -> float:
-    return round(value, 8 if value < 1 else 6)
+    if value < 0.001:
+        return round(value, 10)
+    if value < 1:
+        return round(value, 8)
+    return round(value, 6)
 
 
 def format_duration(seconds: int) -> str:
@@ -219,7 +239,7 @@ async def fetch_real_market_data(force: bool = False) -> bool:
             abs_change = abs(change_24h)
 
             momentum_score = max(min((abs_change + 1.0) / 6.0, 1.0), 0.0)
-            direction_score = max(min((change_24h + 8) / 16, 1.0), 0.0)
+            direction_score = max(min((change_24h + 8.0) / 16.0, 1.0), 0.0)
             volume_score = min(volume / 100000.0, 1.0)
             trend_strength = round(abs_change, 3)
 
@@ -271,7 +291,7 @@ def set_symbol_cooldown(symbol: str) -> None:
 
 
 def recent_signal_count_for_symbol(symbol: str) -> int:
-    return sum(1 for s in signals[:20] if s.get("symbol") == symbol)
+    return sum(1 for s in signals[:25] if s.get("symbol") == symbol)
 
 
 def recent_opened_trade_count() -> int:
@@ -279,6 +299,15 @@ def recent_opened_trade_count() -> int:
     return sum(
         1 for t in trades
         if int(t.get("opened_at", 0)) >= now_ts - RECENT_TRADE_WINDOW_SECONDS
+    )
+
+
+def recent_trade_count_for_symbol(symbol: str, lookback_seconds: int = 3600) -> int:
+    now_ts = int(time.time())
+    return sum(
+        1
+        for t in trades
+        if t.get("symbol") == symbol and int(t.get("opened_at", 0)) >= now_ts - lookback_seconds
     )
 
 
@@ -438,6 +467,7 @@ def create_trade(candidate: Dict) -> Dict:
         "initial_take_profit": round_price(take_profit),
         "risk_usd": round(risk_usd, 4),
         "score": candidate["score"],
+        "base_score": candidate.get("base_score", candidate["score"]),
         "quality": candidate["quality"],
         "status": "open",
         "opened_at": int(time.time()),
@@ -593,13 +623,10 @@ async def run_tick_cycle():
         if regime["regime"] == "bullish":
             if side == "short" and data["score"] < 0.72:
                 side = "flat"
-
         elif regime["regime"] == "bearish":
             if side == "long" and data["score"] < 0.72:
                 side = "flat"
-
-        else:  # neutral
-            # On laisse passer seulement les setups les plus convaincants
+        else:
             if side == "long" and not (
                 data["score"] >= 0.64 and data["trend_strength"] >= 1.10 and data["change_24h"] >= 0.35
             ):
@@ -609,19 +636,25 @@ async def run_tick_cycle():
             ):
                 side = "flat"
 
+        recent_symbol_trades = recent_trade_count_for_symbol(symbol, 3600)
+        diversification_penalty = min(recent_symbol_trades * 0.06, 0.18)
+        adjusted_score = max(data["score"] - diversification_penalty, 0.0)
+
         ranked.append(
             {
                 "symbol": symbol,
                 "price": data["price"],
                 "change_24h": data["change_24h"],
                 "volume": data["volume"],
-                "score": data["score"],
+                "score": adjusted_score,
+                "base_score": data["score"],
                 "trend_strength": data["trend_strength"],
                 "quality": data["quality"],
                 "side": side,
                 "cooldown": is_symbol_on_cooldown(symbol),
                 "prev_score": float(prev.get("score", 0.0)),
                 "prev_change_24h": float(prev.get("change_24h", 0.0)),
+                "recent_symbol_trades": recent_symbol_trades,
             }
         )
 
@@ -649,6 +682,7 @@ async def run_tick_cycle():
                 "symbol": candidate["symbol"],
                 "side": candidate["side"],
                 "score": candidate["score"],
+                "base_score": candidate["base_score"],
                 "price": candidate["price"],
                 "change_24h": candidate["change_24h"],
                 "volume": candidate["volume"],
@@ -656,7 +690,8 @@ async def run_tick_cycle():
                 "quality": candidate["quality"],
                 "reason": (
                     f"regime={regime['regime']} + continuation + trend + momentum + volume "
-                    f"(prev_score={candidate['prev_score']:.3f}, prev_change={candidate['prev_change_24h']:.3f})"
+                    f"+ diversification(recent_symbol_trades={candidate['recent_symbol_trades']}) "
+                    f"(base_score={candidate['base_score']:.3f}, adj_score={candidate['score']:.3f})"
                 ),
                 "created_at": int(time.time()),
             }

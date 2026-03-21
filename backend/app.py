@@ -5,7 +5,7 @@ import time
 from typing import Dict, List
 import httpx
 
-app = FastAPI(title="MEXC AI Bot Backend v10.6 Diversified")
+app = FastAPI(title="MEXC AI Bot Backend v10.7 Active")
 
 app.add_middleware(
     CORSMiddleware,
@@ -56,21 +56,21 @@ KRAKEN_PAIRS: Dict[str, str] = {}
 
 INITIAL_EQUITY = 1000.0
 MARKET_CACHE_SECONDS = 30
-SYMBOL_COOLDOWN_SECONDS = 420
+SYMBOL_COOLDOWN_SECONDS = 240
 MIN_VALID_PRICE = 0.00000001
 
-MIN_SCORE_TO_OPEN = 0.56
+MIN_SCORE_TO_OPEN = 0.50
 MAX_RECENT_SAME_SYMBOL_SIGNALS = 1
-MAX_NEW_TRADES_PER_10_MIN = 5
+MAX_NEW_TRADES_PER_10_MIN = 6
 RECENT_TRADE_WINDOW_SECONDS = 600
 
 BREAK_EVEN_TRIGGER_R = 0.70
 TRAILING_TRIGGER_R = 1.35
 TRAILING_LOCK_R = 0.60
 
-MIN_HOLD_SECONDS = 240
+MIN_HOLD_SECONDS = 180
 TIMED_EXIT_SECONDS = 5400
-TIMED_EXIT_MAX_ABS_PNL = 10.0
+TIMED_EXIT_MAX_ABS_PNL = 12.0
 
 SIMULATED_LEVERAGE = 10.0
 
@@ -213,7 +213,6 @@ async def fetch_real_market_data(force: bool = False) -> bool:
             raise Exception(f"Kraken error: {payload['error']}")
 
         result = payload.get("result", {})
-
         previous_market_state = {k: dict(v) for k, v in market_state.items()}
 
         for s in DESIRED_SYMBOLS:
@@ -344,14 +343,14 @@ def get_market_regime() -> Dict:
     bullish_count = sum(1 for v in valid if v["change_24h"] > 0)
     bearish_count = sum(1 for v in valid if v["change_24h"] < 0)
 
-    if avg_change >= 0.35 and bullish_count >= bearish_count:
+    if avg_change >= 0.25 and bullish_count >= bearish_count:
         regime = "bullish"
-    elif avg_change <= -0.35 and bearish_count >= bullish_count:
+    elif avg_change <= -0.25 and bearish_count >= bullish_count:
         regime = "bearish"
     else:
         regime = "neutral"
 
-    allow_new_trades = avg_score >= 0.28
+    allow_new_trades = avg_score >= 0.22
 
     return {
         "avg_change_24h": round(avg_change, 3),
@@ -431,17 +430,17 @@ def is_continuation_signal(symbol: str, current: Dict, previous: Dict, side: str
 
     if side == "long":
         return (
-            price_delta >= -0.50
-            and score_delta >= -0.10
-            and change_delta >= -0.60
-            and trend_delta >= -0.55
+            price_delta >= -0.70
+            and score_delta >= -0.15
+            and change_delta >= -0.80
+            and trend_delta >= -0.70
         )
 
     return (
-        price_delta <= 0.50
-        and score_delta >= -0.10
-        and change_delta <= 0.60
-        and trend_delta >= -0.55
+        price_delta <= 0.70
+        and score_delta >= -0.15
+        and change_delta <= 0.80
+        and trend_delta >= -0.70
     )
 
 
@@ -450,11 +449,11 @@ def create_trade(candidate: Dict) -> Dict:
     entry = candidate["price"]
 
     if candidate["side"] == "long":
-        stop = entry * 0.989
-        take_profit = entry * 1.032
+        stop = entry * 0.988
+        take_profit = entry * 1.038
     else:
-        stop = entry * 1.011
-        take_profit = entry * 0.968
+        stop = entry * 1.012
+        take_profit = entry * 0.962
 
     return {
         "id": f"trade_{int(time.time() * 1000)}",
@@ -516,7 +515,7 @@ def manage_open_trades() -> List[Dict]:
 
         pnl = calc_trade_pnl(price, trade)
         age_seconds = int(time.time()) - int(trade["opened_at"])
-        quality_drop = age_seconds >= MIN_HOLD_SECONDS and market_state[trade["symbol"]]["score"] < 0.22
+        quality_drop = age_seconds >= MIN_HOLD_SECONDS and market_state[trade["symbol"]]["score"] < 0.18
         timed_exit = age_seconds > TIMED_EXIT_SECONDS and abs(pnl) < TIMED_EXIT_MAX_ABS_PNL
 
         if hit_stop or hit_tp or quality_drop or timed_exit:
@@ -606,9 +605,9 @@ async def run_tick_cycle():
 
         side = "flat"
 
-        strong_up = data["score"] >= 0.62 and data["change_24h"] >= 0.20
-        strong_down = data["score"] >= 0.62 and data["change_24h"] <= -0.20
-        medium_momentum = data["score"] >= 0.56 and data["trend_strength"] >= 0.75
+        strong_up = data["score"] >= 0.58 and data["change_24h"] >= 0.15
+        strong_down = data["score"] >= 0.58 and data["change_24h"] <= -0.15
+        medium_momentum = data["score"] >= 0.50 and data["trend_strength"] >= 0.60
 
         if strong_up:
             side = "long"
@@ -621,23 +620,33 @@ async def run_tick_cycle():
             side = "flat"
 
         if regime["regime"] == "bullish":
-            if side == "short" and data["score"] < 0.72:
+            if side == "short" and data["score"] < 0.70:
                 side = "flat"
+            if side == "long" and not (
+                data["score"] >= 0.52 and data["change_24h"] >= 0.10
+            ):
+                side = "flat"
+
         elif regime["regime"] == "bearish":
-            if side == "long" and data["score"] < 0.72:
+            if side == "long" and data["score"] < 0.70:
                 side = "flat"
+            if side == "short" and not (
+                data["score"] >= 0.52 and data["change_24h"] <= -0.10
+            ):
+                side = "flat"
+
         else:
             if side == "long" and not (
-                data["score"] >= 0.64 and data["trend_strength"] >= 1.10 and data["change_24h"] >= 0.35
+                data["score"] >= 0.60 and data["trend_strength"] >= 0.90 and data["change_24h"] >= 0.25
             ):
                 side = "flat"
             if side == "short" and not (
-                data["score"] >= 0.64 and data["trend_strength"] >= 1.10 and data["change_24h"] <= -0.35
+                data["score"] >= 0.60 and data["trend_strength"] >= 0.90 and data["change_24h"] <= -0.25
             ):
                 side = "flat"
 
         recent_symbol_trades = recent_trade_count_for_symbol(symbol, 3600)
-        diversification_penalty = min(recent_symbol_trades * 0.06, 0.18)
+        diversification_penalty = min(recent_symbol_trades * 0.03, 0.12)
         adjusted_score = max(data["score"] - diversification_penalty, 0.0)
 
         ranked.append(
